@@ -21,6 +21,7 @@ pre_processed_images/
 # Data directory
 data/
 !data/scale/
+!data/scale/**
 
 # IDE
 .vscode/
