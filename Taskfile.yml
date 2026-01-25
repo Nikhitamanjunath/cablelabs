@@ -69,4 +69,35 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} predict/predict.py'
 
+  clean:
+    desc: Remove generated files (keeps scale image, preprocessed images, and images directory)
+    cmds:
+      - |
+        echo "Cleaning generated files..."
+        if [ -d "data/predictions" ]; then
+          rm -rf data/predictions
+          echo "Removed data/predictions"
+        fi
+        if [ -d "data/transformed" ]; then
+          rm -rf data/transformed
+          echo "Removed data/transformed"
+        fi
+        echo "Clean complete! Kept: data/scale, data/preprocessed, data/images"
+
+  clean-all:
+    desc: Remove all generated files including preprocessed images and images directory
+    deps: [clean]
+    cmds:
+      - |
+        echo "Performing total clean..."
+        if [ -d "data/preprocessed" ]; then
+          rm -rf data/preprocessed
+          echo "Removed data/preprocessed"
+        fi
+        if [ -d "data/images" ]; then
+          rm -rf data/images
+          echo "Removed data/images"
+        fi
+        echo "Total clean complete! Kept: data/scale"
+
   
