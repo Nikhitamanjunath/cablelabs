@@ -13,16 +13,8 @@ output_folder: "data/predictions"
 # Number of previous days to use for prediction
 lookback_days: 6
 
-# Learning rate for online learning (0.0 to 1.0)
-# Higher values give more weight to recent data
-learning_rate: 0.1
-
 # Prediction method: "linear", "exponential_smoothing", or "moving_average"
 prediction_method: "exponential_smoothing"
-
-# Alpha parameter for exponential smoothing (0.0 to 1.0)
-# Higher alpha = more weight to recent observations
-exponential_smoothing_alpha: 0.3
 
 # Enable visualization of predictions
 visualize_predictions: true

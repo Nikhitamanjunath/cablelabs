@@ -43,6 +43,28 @@ spec.loader.exec_module(transform_module)
 ImageTransformer = transform_module.ImageTransformer
 TransformConfig = transform_module.TransformConfig
 
+# Constants
+GRAPH_LEFT = 175
+GRAPH_TOP = 100
+GRAPH_WIDTH = 733
+GRAPH_HEIGHT = 564
+NUM_ROWS = 24
+NUM_COLS = 70
+CELL_SIZE = 8
+ERROR_CELL_SIZE = 20
+SCALE_WIDTH = 50
+PADDING = 20
+GAP = 20
+SCALE_GAP = 20
+ERROR_MAP_GAP = 20
+DEFAULT_MAX_VALUE = 60.0
+ZERO_ERROR_THRESHOLD = 0.1
+PEAK_THRESHOLD_MULTIPLIER = 1.5
+VOLATILITY_THRESHOLD = 0.35
+PEAK_DETECTION_THRESHOLD = 0.80
+MIN_LOOKBACK_FOR_PEAK = 4
+MAX_LOOKBACK_FOR_PEAK = 6
+
 
 class PredictConfig(BaseModel):
     """Prediction configuration."""
@@ -63,21 +85,9 @@ class PredictConfig(BaseModel):
         ge=1,
         description="Number of previous days to use for prediction"
     )
-    learning_rate: float = Field(
-        default=0.1,
-        ge=0.0,
-        le=1.0,
-        description="Learning rate for online learning (0.0 to 1.0)"
-    )
     prediction_method: str = Field(
         default="exponential_smoothing",
         description="Prediction method: 'linear', 'exponential_smoothing', or 'moving_average'"
-    )
-    exponential_smoothing_alpha: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Alpha parameter for exponential smoothing"
     )
     visualize_predictions: bool = Field(
         default=True,
@@ -93,9 +103,7 @@ class OnlinePredictor:
     def __init__(self, config: PredictConfig):
         self.config = config
         self.lookback_days = config.lookback_days
-        self.learning_rate = config.learning_rate
         self.prediction_method = config.prediction_method
-        self.alpha = config.exponential_smoothing_alpha
         
     def predict_next_day(self, historical_data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -139,74 +147,7 @@ class OnlinePredictor:
                     # Only one value, use it
                     predicted_row[freq_col] = valid_values[0]
                 else:
-                    # Improved prediction strategy
-                    # For volatile data, use the maximum of recent values (peaks are important)
-                    # But apply decay based on how recent the peak was
-                    
-                    # Smart prediction: For volatile data with peaks, peaks are the signal
-                    # Check if there are significant peaks in the data
-                    if len(valid_values) >= 4:
-                        # Look at last 6 values if available for better pattern detection
-                        lookback = min(6, len(valid_values))
-                        recent = valid_values[-lookback:]
-                        recent_max = np.max(recent)
-                        recent_mean = np.mean(recent)
-                        recent_std = np.std(recent)
-                        
-                        # If there's a significant peak (max >> mean) and high volatility
-                        # Lower the threshold to catch more peak cases
-                        if recent_max > recent_mean * 1.5 and recent_std > recent_mean * 0.35:
-                            # Peak-based prediction: use the peak with minimal decay
-                            # Find most recent occurrence of values close to the peak
-                            peak_threshold = recent_max * 0.80  # 80% of max (even more lenient to catch peaks)
-                            peak_positions = [i for i, v in enumerate(valid_values) if v >= peak_threshold]
-                            if peak_positions:
-                                most_recent_peak_idx = peak_positions[-1]
-                                peak_value = valid_values[most_recent_peak_idx]
-                                # Calculate how recent the peak is
-                                positions_from_end = len(valid_values) - 1 - most_recent_peak_idx
-                                # If peak was very recent (last 2 values), use it almost directly
-                                # Also consider the most recent value - if it's also high, trust it more
-                                last_value = valid_values[-1]
-                                if positions_from_end <= 1:
-                                    # Peak is very recent - use peak with minimal decay
-                                    if last_value > recent_mean * 1.5:
-                                        # Last value is also high - average peak and last
-                                        predicted = (peak_value * 0.97 + last_value * 0.03)
-                                    else:
-                                        predicted = peak_value * 0.97
-                                elif positions_from_end <= 3:
-                                    predicted = peak_value * 0.94
-                                elif positions_from_end <= 5:
-                                    predicted = peak_value * 0.90
-                                else:
-                                    predicted = peak_value * 0.88
-                            else:
-                                # Use standard method
-                                if self.prediction_method == "exponential_smoothing":
-                                    predicted = self._exponential_smoothing(valid_values)
-                                else:
-                                    predicted = self._exponential_smoothing(valid_values)
-                        else:
-                            # Use the selected prediction method
-                            if self.prediction_method == "exponential_smoothing":
-                                predicted = self._exponential_smoothing(valid_values)
-                            elif self.prediction_method == "moving_average":
-                                predicted = self._moving_average(valid_values)
-                            elif self.prediction_method == "linear":
-                                predicted = self._linear_regression(valid_values)
-                            else:
-                                predicted = self._exponential_smoothing(valid_values)
-                    else:
-                        # Use the selected prediction method
-                        if self.prediction_method == "exponential_smoothing":
-                            predicted = self._exponential_smoothing(valid_values)
-                        elif self.prediction_method == "moving_average":
-                            predicted = self._moving_average(valid_values)
-                        elif self.prediction_method == "linear":
-                            predicted = self._linear_regression(valid_values)
-                        else:
-                            predicted = self._exponential_smoothing(valid_values)
+                    predicted = self._predict_value(valid_values)
                     
                     # Ensure prediction is non-negative
                     predicted = max(0.0, predicted)
@@ -224,6 +165,42 @@ class OnlinePredictor:
         
         return pred_df
     
+    def _predict_value(self, values: np.ndarray) -> float:
+        """Predict next value using peak detection or standard method."""
+        if len(values) >= MIN_LOOKBACK_FOR_PEAK:
+            lookback = min(MAX_LOOKBACK_FOR_PEAK, len(values))
+            recent = values[-lookback:]
+            recent_max, recent_mean, recent_std = np.max(recent), np.mean(recent), np.std(recent)
+            
+            if recent_max > recent_mean * PEAK_THRESHOLD_MULTIPLIER and recent_std > recent_mean * VOLATILITY_THRESHOLD:
+                peak_threshold = recent_max * PEAK_DETECTION_THRESHOLD
+                peak_positions = [i for i, v in enumerate(values) if v >= peak_threshold]
+                if peak_positions:
+                    peak_idx = peak_positions[-1]
+                    peak_value = values[peak_idx]
+                    positions_from_end = len(values) - 1 - peak_idx
+                    last_value = values[-1]
+                    
+                    if positions_from_end <= 1:
+                        predicted = (peak_value * 0.97 + last_value * 0.03) if last_value > recent_mean * PEAK_THRESHOLD_MULTIPLIER else peak_value * 0.97
+                    elif positions_from_end <= 3:
+                        predicted = peak_value * 0.94
+                    elif positions_from_end <= 5:
+                        predicted = peak_value * 0.90
+                    else:
+                        predicted = peak_value * 0.88
+                    return max(0.0, predicted)
+        
+        # Use standard prediction method
+        if self.prediction_method == "exponential_smoothing":
+            return self._exponential_smoothing(values)
+        elif self.prediction_method == "moving_average":
+            return self._moving_average(values)
+        elif self.prediction_method == "linear":
+            return self._linear_regression(values)
+        else:
+            return self._exponential_smoothing(values)
+    
     def _exponential_smoothing(self, values: np.ndarray) -> float:
         """Exponential smoothing prediction with strong emphasis on recent values."""
         if len(values) == 0:
@@ -232,30 +209,16 @@ class OnlinePredictor:
         if len(values) == 1:
             return values[0]
         
-        # Strategy: For volatile data, peaks are the signal
-        # Look at last 6 values if available to better detect patterns
-        lookback = min(6, len(values))
+        lookback = min(MAX_LOOKBACK_FOR_PEAK, len(values))
         recent = values[-lookback:]
-        max_val = np.max(recent)
-        min_val = np.min(recent)
-        range_val = max_val - min_val
-        mean_val = np.mean(recent)
-        std_val = np.std(recent)
+        max_val, min_val = np.max(recent), np.min(recent)
+        range_val, mean_val, std_val = max_val - min_val, np.mean(recent), np.std(recent)
         
-        # If very volatile (high range and std), peaks are likely the signal
         if range_val > 40 and std_val > mean_val * 0.8:
-            # Find the maximum and its position
             max_idx_in_recent = np.argmax(recent)
-            max_absolute_idx = len(values) - lookback + max_idx_in_recent
-            
-            # If max is in the most recent half of the lookback window
             if max_idx_in_recent >= lookback // 2:
-                # Recent peak - use it with minimal decay (0.90-0.95)
-                decay = 0.95 if max_idx_in_recent >= lookback - 2 else 0.90
-                return max_val * decay
-            else:
-                # Older peak - still use it but with more decay
-                return max_val * 0.82
+                return max_val * (0.95 if max_idx_in_recent >= lookback - 2 else 0.90)
+            return max_val * 0.82
         
         # For less volatile data, use exponential smoothing with heavy recent weight
         if len(values) >= 3:
@@ -403,11 +366,10 @@ class PredictionVisualizer:
         """
         height, width = img_array.shape[:2]
         
-        # Use fixed coordinates from transform script (same as scraper)
-        left = 175
-        top = 100
-        right = 908  # 175 + 733
-        bottom = 664  # 100 + 564
+        left = GRAPH_LEFT
+        top = GRAPH_TOP
+        right = GRAPH_LEFT + GRAPH_WIDTH
+        bottom = GRAPH_TOP + GRAPH_HEIGHT
         
         # Validate coordinates
         left = max(0, min(left, width))
@@ -418,33 +380,60 @@ class PredictionVisualizer:
         # Extract graph region
         graph_region = img_array[top:bottom, left:right]
         
-        # Resize to 24x70 grid (one pixel per cell)
         graph_height, graph_width = graph_region.shape[:2]
-        num_rows = 24
-        num_cols = 70
+        cell_height = graph_height / NUM_ROWS
+        cell_width = graph_width / NUM_COLS
         
-        # Calculate cell dimensions
-        cell_height = graph_height / num_rows
-        cell_width = graph_width / num_cols
+        resized_graph = np.zeros((NUM_ROWS, NUM_COLS, 3), dtype=np.uint8)
         
-        # Create resized graph (24x70 pixels)
-        resized_graph = np.zeros((num_rows, num_cols, 3), dtype=np.uint8)
-        
-        for row_idx in range(num_rows):
-            # Row 0 is hour 23 (top), row 23 is hour 0 (bottom)
-            # Calculate y position: center of the row cell
-            y_in_graph = int(row_idx * cell_height + cell_height / 2)
-            y_in_graph = min(y_in_graph, graph_height - 1)
-            
-            for col_idx in range(num_cols):
-                # Calculate x position: center of the column cell
-                x_in_graph = int(col_idx * cell_width + cell_width / 2)
-                x_in_graph = min(x_in_graph, graph_width - 1)
+        for row_idx in range(NUM_ROWS):
+            y_in_graph = min(int(row_idx * cell_height + cell_height / 2), graph_height - 1)
+            for col_idx in range(NUM_COLS):
+                x_in_graph = min(int(col_idx * cell_width + cell_width / 2), graph_width - 1)
                 
                 # Sample pixel at center of cell
                 resized_graph[row_idx, col_idx] = graph_region[y_in_graph, x_in_graph]
         
         return resized_graph
+    
+    def _get_min_color(self, color_scale: ColorScale) -> Tuple[int, int, int]:
+        """Get the minimum (darkest) color from the scale."""
+        scale_colors = color_scale.get_scale_colors()
+        if not scale_colors:
+            return (0, 0, 0)
+        
+        min_color = tuple(scale_colors[-1])
+        min_brightness = sum(float(c) for c in min_color) / 3.0
+        
+        if min_brightness > 200:
+            darkest = min_color
+            darkest_brightness = min_brightness
+            for scale_color in scale_colors:
+                brightness = sum(float(c) for c in scale_color) / 3.0
+                if brightness < darkest_brightness:
+                    darkest_brightness = brightness
+                    darkest = tuple(scale_color)
+            return darkest
+        return min_color
+    
+    def _get_color_for_value(self, value: float, color_scale: ColorScale, max_value: float) -> Tuple[int, int, int]:
+        """Convert value to color, ensuring never white/too light."""
+        min_color = self._get_min_color(color_scale)
+        clamped_value = max(0.0, min(max_value, float(value)))
+        
+        try:
+            if self.input_scale_colors and len(self.input_scale_colors) > 0:
+                color = self._number_to_color_using_input_scale(clamped_value, self.input_scale_colors, max_value)
+            else:
+                color = color_scale.number_to_color(clamped_value, max_value=max_value)
+        except Exception:
+            return min_color
+        
+        is_white = all(c > 250 for c in color)
+        brightness = sum(float(c) for c in color) / 3.0
+        is_too_light = brightness > (150 if value < 5.0 else 230)
+        
+        return min_color if (is_white or is_too_light) else color
     
     def _number_to_color_using_input_scale(self, value: float, input_scale_colors: list, max_value: float) -> Tuple[int, int, int]:
         """
@@ -554,10 +543,7 @@ class PredictionVisualizer:
                         error_values.append(abs_error)
                         total_valid_cells += 1
                         
-                        # Count zero errors (use threshold for floating point comparison)
-                        # Use a more lenient threshold - consider errors < 0.1 as effectively zero
-                        # This accounts for small rounding differences in color-to-number conversion
-                        if abs_error < 0.1:  # Consider errors < 0.1 as zero (more lenient)
+                        if abs_error < ZERO_ERROR_THRESHOLD:
                             zero_error_count += 1
                     else:
                         # NaN values - mark as NaN
@@ -572,82 +558,32 @@ class PredictionVisualizer:
             if error_values:
                 mean_error = np.mean(error_values)
                 
-                # Max and min error (ignoring cells with effectively 0 error)
-                non_zero_errors = [e for e in error_values if e >= 0.1]  # Use same threshold as zero detection
+                non_zero_errors = [e for e in error_values if e >= ZERO_ERROR_THRESHOLD]
                 if non_zero_errors:
                     max_error = np.max(non_zero_errors)
                     min_error = np.min(non_zero_errors)
                 
-                # Percentage of cells with effectively 0 error (< 0.1)
                 if total_valid_cells > 0:
                     zero_error_percentage = (zero_error_count / total_valid_cells) * 100.0
-                    print(f"    Debug: zero_error_count={zero_error_count}, total_valid_cells={total_valid_cells}, percentage={zero_error_percentage:.1f}%")
-                    print(f"    Debug: Sample errors - min={np.min(error_values):.3f}, max={np.max(error_values):.3f}, mean={np.mean(error_values):.3f}")
-                    # Count how many are exactly 0 vs very small
-                    exact_zeros = sum(1 for e in error_values if e == 0.0)
-                    very_small = sum(1 for e in error_values if 0.0 < e < 0.1)
-                    print(f"    Debug: exact_zeros={exact_zeros}, very_small (<0.1)={very_small}")
         
-        # Image dimensions - one pixel per cell (24x70)
-        cell_size = 8  # Size of each cell in pixels
-        padding = 20
-        scale_width = 50
-        gap = 20  # Gap between original and predicted
-        scale_gap = 20  # Gap between predicted and scale
         
-        # Calculate image dimensions
-        graph_width = num_freq_bands * cell_size
-        graph_height = num_hours * cell_size
-        
-        # Side by side: original | predicted | scale
-        # Add error map below if available (spans full width of both graphs)
-        # Error map will use larger cells (20px instead of 8px) for better readability
-        error_map_gap = 20 if error_map is not None else 0
-        # Error map height will be calculated when drawing (uses larger cells)
-        # Estimate: if error map exists, it will be taller than graph_height
-        error_map_height_estimate = (num_hours * 20) if error_map is not None else 0  # 20px per cell
-        # Extra space for statistics (displayed horizontally)
+        graph_width = num_freq_bands * CELL_SIZE
+        graph_height = num_hours * CELL_SIZE
+        error_map_gap = ERROR_MAP_GAP if error_map is not None else 0
+        error_map_height_estimate = (num_hours * ERROR_CELL_SIZE) if error_map is not None else 0
         stats_height = 30 if error_map is not None else 0
         
-        total_width = graph_width * 2 + scale_width + gap + scale_gap + padding * 2
-        total_height = graph_height + error_map_height_estimate + stats_height + padding * 3 + 30 + error_map_gap  # Extra space for labels, error map, and stats
+        total_width = graph_width * 2 + SCALE_WIDTH + GAP + SCALE_GAP + PADDING * 2
+        total_height = graph_height + error_map_height_estimate + stats_height + PADDING * 3 + 30 + error_map_gap
         
         # Create image
         img = Image.new('RGB', (total_width, total_height), color='white')
         draw = ImageDraw.Draw(img)
         
-        # Calculate actual data range for proper scaling FIRST
-        # This needs to be done before drawing either original or predicted
-        # Get all values from both predicted and actual dataframes to determine the true range
-        all_values = []
-        for _, row in predicted_df_sorted.iterrows():
-            for freq_col in freq_columns:
-                val = row[freq_col]
-                if not np.isnan(val) and val is not None:
-                    all_values.append(float(val))
-        
-        if actual_df is not None:
-            actual_df_sorted_for_range = actual_df.sort_values('hour', ascending=False).reset_index(drop=True)
-            for _, row in actual_df_sorted_for_range.iterrows():
-                for freq_col in freq_columns:
-                    val = row[freq_col]
-                    if not np.isnan(val) and val is not None:
-                        all_values.append(float(val))
-        
-        # Determine the effective max value for visualization
-        # CRITICAL: Use the original image's scale max_value EXACTLY as-is
-        # The original image's scale defines what colors mean, so predictions must use the same scale
-        # This ensures predicted colors are directly comparable to the original image
-        effective_max = self.input_max_value if self.input_max_value is not None else 60.0
-        
-        # Don't modify based on data range - use the scale as-is
-        # The scale is the ground truth for what colors represent
-        effective_min = 0.0
-        
-        # Load and extract original graph region
+        effective_max = self.input_max_value if self.input_max_value is not None else DEFAULT_MAX_VALUE
         original_img_array = self.load_original_image(date)
-        orig_x_start = padding  # Define even if original image not found
-        orig_y_start = padding + 25  # Space for label
+        orig_x_start = PADDING
+        orig_y_start = PADDING + 25
         
         if original_img_array is not None:
             original_graph = self.extract_graph_region(original_img_array)
@@ -670,12 +606,10 @@ class PredictionVisualizer:
             if orig_image_path.exists():
                 orig_transformer.process_image(orig_image_path)
             
-            # Draw original graph - convert colors to values, then back to colors
-            # This ensures both original and predicted use the same color mapping
             for row_idx in range(num_hours):
-                y = orig_y_start + row_idx * cell_size
+                y = orig_y_start + row_idx * CELL_SIZE
                 for col_idx in range(num_freq_bands):
-                    x = orig_x_start + col_idx * cell_size
+                    x = orig_x_start + col_idx * CELL_SIZE
                     # Get pixel color from original graph
                     raw_color = tuple(original_graph[row_idx, col_idx])
                     
@@ -698,138 +632,38 @@ class PredictionVisualizer:
                         # Fallback to raw color if transformer failed
                         color = raw_color
                     
-                    draw.rectangle(
-                        [x, y, x + cell_size, y + cell_size],
-                        fill=color
-                    )
+                    draw.rectangle([x, y, x + CELL_SIZE, y + CELL_SIZE], fill=color)
         else:
             print(f"  Warning: Could not load original image for {date}")
-            # Draw placeholder for original
             draw.rectangle(
                 [orig_x_start, orig_y_start, orig_x_start + graph_width, orig_y_start + graph_height],
-                fill='lightgray',
-                outline='black',
-                width=2
+                fill='lightgray', outline='black', width=2
             )
         
-        # Draw predicted graph
-        # Note: predicted_df_sorted is already sorted with hour 23 first (row 0), hour 0 last (row 23)
-        # This matches the original image layout
-        pred_x_start = orig_x_start + graph_width + gap
-        pred_y_start = padding + 25  # Space for label
+        pred_x_start = orig_x_start + graph_width + GAP
+        pred_y_start = PADDING + 25
         
         for row_idx, row in predicted_df_sorted.iterrows():
-            hour = int(row['hour'])
-            y = pred_y_start + row_idx * cell_size
-            
+            y = pred_y_start + row_idx * CELL_SIZE
             for col_idx, freq_col in enumerate(freq_columns):
                 value = row[freq_col]
-                x = pred_x_start + col_idx * cell_size
+                x = pred_x_start + col_idx * CELL_SIZE
                 
-                # Convert value to color - ALWAYS use a color, never white
-                # If NaN or invalid, use minimum value (0.0 = dark blue)
-                if np.isnan(value) or value is None:
-                    value = 0.0  # Use minimum value (dark blue) instead of white
-                
-                # Convert to float - number_to_color will handle values above max_value
-                # by mapping them to the maximum color (top of scale)
-                value = float(value)
-                
-                # Get minimum color from scale first (for fallback)
-                scale_colors = color_scale.get_scale_colors()
-                if scale_colors and len(scale_colors) > 0:
-                    min_color = tuple(scale_colors[-1])  # Bottom = minimum (dark blue/purple)
-                    
-                    # Verify minimum color is not white - if it is, find the darkest color
-                    min_brightness = (min_color[0] + min_color[1] + min_color[2]) / 3.0
-                    if min_brightness > 200:  # Minimum color is too light, find darkest
-                        darkest_color = min_color
-                        darkest_brightness = min_brightness
-                        for scale_color in scale_colors:
-                            brightness = (scale_color[0] + scale_color[1] + scale_color[2]) / 3.0
-                            if brightness < darkest_brightness:
-                                darkest_brightness = brightness
-                                darkest_color = tuple(scale_color)
-                        min_color = darkest_color
-                else:
-                    # No scale colors - skip this cell
-                    continue
-                
-                # Convert value to color using the INPUT scale colors directly
-                # This ensures colors match what the original image's scale represents
-                # Clamp value to valid range
-                clamped_value = max(0.0, min(effective_max, float(value)))
-                
-                try:
-                    # Use input scale colors if available, otherwise fallback to reference scale
-                    if self.input_scale_colors and len(self.input_scale_colors) > 0:
-                        color = self._number_to_color_using_input_scale(
-                            clamped_value, 
-                            self.input_scale_colors, 
-                            effective_max
-                        )
-                    else:
-                        color = color_scale.number_to_color(clamped_value, max_value=effective_max)
-                except Exception as e:
-                    # If number_to_color fails, use minimum color from scale
-                    print(f"    Warning: number_to_color failed for value {value}: {e}")
-                    color = min_color
-                
-                # Aggressive check: Never use white or very light colors
-                # Check multiple conditions for white/light colors
-                is_white = (color[0] > 250 and color[1] > 250 and color[2] > 250)
-                # Use float64 to avoid overflow warnings
-                brightness = (float(color[0]) + float(color[1]) + float(color[2])) / 3.0
-                is_too_light = brightness > 230  # Lower threshold
-                
-                # For low values, be even more strict
-                if value < 5.0:
-                    is_too_light = brightness > 150  # Very strict for low values
-                
-                # If color is white/too light, ALWAYS use minimum color from scale
-                if is_white or is_too_light:
-                    color = min_color
-                
-                # Final check: if still white after all checks, force minimum color
-                if color[0] > 250 and color[1] > 250 and color[2] > 250:
-                    color = min_color
-                
-                # Draw cell - always draw with a color, never white
-                draw.rectangle(
-                    [x, y, x + cell_size, y + cell_size],
-                    fill=color
-                )
+                value = 0.0 if (np.isnan(value) or value is None) else float(value)
+                color = self._get_color_for_value(value, color_scale, effective_max)
+                draw.rectangle([x, y, x + CELL_SIZE, y + CELL_SIZE], fill=color)
         
-        # Draw color scale on the right (with gap from predicted image)
-        # This visualization uses the trained color scale directly - no transformations
-        scale_x = pred_x_start + graph_width + scale_gap
-        scale_y_start = padding + 25
-        scale_height = graph_height
-        num_scale_samples = max(200, scale_height)
+        scale_x = pred_x_start + graph_width + SCALE_GAP
+        scale_y_start = PADDING + 25
+        num_scale_samples = max(200, graph_height)
         
         for i in range(num_scale_samples):
             y_ratio = i / (num_scale_samples - 1) if num_scale_samples > 1 else 0.0
-            y = int(scale_y_start + y_ratio * scale_height)
-            
-            # Calculate value based on position
-            # Scale is always standard: top (y_ratio=0) = max_value, bottom (y_ratio=1) = 0
-            # Top of scale bar = yellow (max value), bottom = dark blue (0)
-            # Use effective_max for consistency with the graph visualization
-            max_val = effective_max
-            value = (1.0 - y_ratio) * max_val
-            
-            # Get color for this value using the input scale colors if available
-            if self.input_scale_colors and len(self.input_scale_colors) > 0:
-                color = self._number_to_color_using_input_scale(value, self.input_scale_colors, max_val)
-            else:
-                color = color_scale.number_to_color(value, max_value=max_val)
-            if color:
-                # Draw a line segment for this part of the scale
-                y_next = int(scale_y_start + ((i + 1) / num_scale_samples) * scale_height) if i < num_scale_samples - 1 else scale_y_start + scale_height
-                draw.rectangle(
-                    [scale_x, y, scale_x + scale_width, y_next],
-                    fill=color
-                )
+            y = int(scale_y_start + y_ratio * graph_height)
+            value = (1.0 - y_ratio) * effective_max
+            color = self._get_color_for_value(value, color_scale, effective_max)
+            y_next = int(scale_y_start + ((i + 1) / num_scale_samples) * graph_height) if i < num_scale_samples - 1 else scale_y_start + graph_height
+            draw.rectangle([scale_x, y, scale_x + SCALE_WIDTH, y_next], fill=color)
         
         # Add labels
         try:
@@ -839,21 +673,15 @@ class PredictionVisualizer:
             font = ImageFont.load_default()
             small_font = ImageFont.load_default()
         
-        # Title
-        title = f"Date: {date}"
-        draw.text((padding, 5), title, fill='black', font=font)
-        
-        # Labels for each graph
-        draw.text((orig_x_start, padding + 10), "Original", fill='black', font=small_font)
-        draw.text((pred_x_start, padding + 10), "Predicted", fill='black', font=small_font)
+        draw.text((PADDING, 5), f"Date: {date}", fill='black', font=font)
+        draw.text((orig_x_start, PADDING + 10), "Original", fill='black', font=small_font)
+        draw.text((pred_x_start, PADDING + 10), "Predicted", fill='black', font=small_font)
         
         # Draw error map if available (simple grid with numbers)
         # Error map spans the full width of both original and predicted images
         if error_map is not None:
             error_y_start = orig_y_start + graph_height + error_map_gap
             
-            # Use larger cell size for error map to make numbers clearly visible
-            error_cell_size = 20  # Larger cells for better readability
             
             # Load font for error map (larger size for readability)
             try:
@@ -864,72 +692,41 @@ class PredictionVisualizer:
                 except:
                     error_font = ImageFont.load_default()
             
-            # Error map width spans both graphs (original + predicted)
-            error_map_width = graph_width * 2 + gap
-            # Calculate how many cells fit in the error map width
-            error_cells_per_graph = num_freq_bands
-            error_total_cells = error_cells_per_graph * 2  # Span both graphs
+            error_map_width = graph_width * 2 + GAP
+            error_total_cells = num_freq_bands * 2
             
-            # Draw grid background (white cells with borders)
-            # Each cell in error map corresponds to a cell in the graphs
             for row_idx in range(num_hours):
-                y = error_y_start + row_idx * error_cell_size
+                y = error_y_start + row_idx * ERROR_CELL_SIZE
                 for col_idx in range(error_total_cells):
-                    x = orig_x_start + col_idx * error_cell_size
+                    x = orig_x_start + col_idx * ERROR_CELL_SIZE
                     
-                    # Only draw if within error map width
-                    if x + error_cell_size <= orig_x_start + error_map_width:
-                        # Get error from the corresponding position
-                        # Map column index back to original frequency band
+                    if x + ERROR_CELL_SIZE <= orig_x_start + error_map_width:
                         freq_col_idx = col_idx % num_freq_bands
                         error_pct = error_map[row_idx, freq_col_idx]
                         
-                        # Draw white cell with light gray border
                         draw.rectangle(
-                            [x, y, x + error_cell_size, y + error_cell_size],
-                            fill='white',
-                            outline='lightgray',
-                            width=1
+                            [x, y, x + ERROR_CELL_SIZE, y + ERROR_CELL_SIZE],
+                            fill='white', outline='lightgray', width=1
                         )
                         
-                        # Draw error as text for every cell (with sign)
                         if not np.isnan(error_pct):
-                            # Show signed error with + or - sign
-                            if error_pct >= 0:
-                                error_text = f"+{error_pct:.1f}"
-                            else:
-                                error_text = f"{error_pct:.1f}"  # Negative already has - sign
-                            
-                            # Center text in cell
-                            # Get text size to center properly
+                            error_text = f"+{error_pct:.1f}" if error_pct >= 0 else f"{error_pct:.1f}"
                             try:
                                 bbox = draw.textbbox((0, 0), error_text, font=error_font)
-                                text_width = bbox[2] - bbox[0]
-                                text_height = bbox[3] - bbox[1]
-                            except:
-                                # Fallback if textbbox fails
-                                text_width = 15
-                                text_height = 10
-                            
-                            text_x = x + max(0, (error_cell_size - text_width) // 2)
-                            text_y = y + max(0, (error_cell_size - text_height) // 2)
-                            
-                            try:
+                                text_x = x + max(0, (ERROR_CELL_SIZE - (bbox[2] - bbox[0])) // 2)
+                                text_y = y + max(0, (ERROR_CELL_SIZE - (bbox[3] - bbox[1])) // 2)
                                 draw.text((text_x, text_y), error_text, fill='black', font=error_font)
-                            except Exception as e:
-                                # If font rendering fails, skip this text
+                            except Exception:
                                 pass
             
-            # Update error map height based on new cell size
-            error_map_height = num_hours * error_cell_size
+            error_map_height = num_hours * ERROR_CELL_SIZE
             
             # Label for error map
             draw.text((orig_x_start, error_y_start - 15), "Error Map", fill='black', font=small_font)
             
-            # Display error statistics horizontally (next to each other)
             stats_y = error_y_start + error_map_height + 5
             stats_x = orig_x_start
-            stats_spacing = 30  # Space between each stat
+            stats_spacing = 30
             
             if mean_error is not None:
                 error_text = f"Mean: {mean_error:.2f}"
@@ -1082,7 +879,7 @@ def main():
             if color_scale is None:
                 print(f"  ⚠ Warning: Could not load color scale, skipping visualization")
             else:
-                max_val = visualizer.input_max_value if visualizer.input_max_value is not None else 60.0
+                max_val = visualizer.input_max_value if visualizer.input_max_value is not None else DEFAULT_MAX_VALUE
                 print(f"  ✓ Color scale loaded (max: {max_val})")
                 
                 # Generate visualization

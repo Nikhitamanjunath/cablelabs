@@ -10,10 +10,6 @@ to_date: "2025-01-31"
 frequency_start: 3.1
 frequency_end: 3.5
 
-# Color scale model to use (must match model_name from color_scale/config.yaml)
-# Model file will be loaded from data/models/{model_name}.pkl
-model_name: "alpha"
-
 # Path to folder containing preprocessed images
 preprocessed_folder: "data/preprocessed"
 

@@ -33,6 +33,22 @@ if str(project_root) not in sys.path:
 # Import ColorScale from color_scale module
 from color_scale import ColorScale
 
+# Constants
+SCALE_RIGHT_START_RATIO = 0.85
+SCALE_WIDTH = 40
+SCALE_MARGIN_RATIO = 0.05
+GRAPH_LEFT = 175
+GRAPH_TOP = 100
+GRAPH_WIDTH = 733
+GRAPH_HEIGHT = 564
+FREQ_START = 3.1
+FREQ_STEP = 0.005
+NUM_ROWS = 24
+NUM_COLS = 70
+SCALE_SAMPLE_COUNT = 500
+DEFAULT_MAX_VALUE = 100.0
+MAX_REASONABLE_VALUE = 1000.0
+
 
 class TransformConfig(BaseModel):
     """Transform configuration."""
@@ -72,10 +88,6 @@ class TransformConfig(BaseModel):
         default="transformed_data.parquet",
         description="Path to output file for combined DataFrame (Parquet format). Will be saved in output_folder."
     )
-    color_tolerance: int = Field(
-        default=15,
-        description="Color matching tolerance (RGB difference)"
-    )
 
 
 class ImageTransformer:
@@ -99,6 +111,110 @@ class ImageTransformer:
         self.preprocessed_path.mkdir(exist_ok=True)
         self.output_path.mkdir(exist_ok=True)
     
+    def _filter_columns_by_frequency(self, columns: List[str], freq_start: float, freq_end: float) -> List[str]:
+        """Filter DataFrame columns by frequency range."""
+        display_cols = []
+        for col_name in columns:
+            try:
+                freq_range = col_name.split('-')
+                if len(freq_range) == 2:
+                    freq_band_start, freq_band_end = float(freq_range[0]), float(freq_range[1])
+                    if freq_band_end >= freq_start and freq_band_start <= freq_end:
+                        display_cols.append(col_name)
+            except (ValueError, IndexError):
+                continue
+        return display_cols
+    
+    def _display_dataframe_preview(self, df: pd.DataFrame, display_cols: List[str], freq_start: float, freq_end: float):
+        """Display a preview of the DataFrame with optional frequency filtering."""
+        if display_cols and len(df) > 0:
+            existing_cols = [col for col in display_cols if col in df.columns]
+            if existing_cols:
+                df_display = df[existing_cols]
+                print(f"\n  Displaying frequency range: {freq_start} - {freq_end} GHz")
+                print(f"  ({len(existing_cols)} columns out of {NUM_COLS} total)")
+                print(f"\n  DataFrame preview (first 5 rows, filtered columns):")
+                print(df_display.iloc[:5].to_string())
+            else:
+                print(f"\n  No matching columns found in frequency range {freq_start} - {freq_end} GHz")
+                print(f"  Showing first 10 columns instead:")
+                if len(df.columns) > 0:
+                    print(df.iloc[:5, :min(10, len(df.columns))].to_string())
+                else:
+                    print("  (DataFrame is empty)")
+        elif len(df) > 0:
+            print(f"\n  No columns found in frequency range {freq_start} - {freq_end} GHz")
+            print(f"  Showing first 10 columns instead:")
+            print(df.iloc[:5, :min(10, len(df.columns))].to_string())
+        else:
+            print(f"\n  DataFrame is empty - no data extracted")
+    
+    def _get_ocr_preprocessing_steps(self):
+        """Return list of preprocessing functions for OCR."""
+        return [
+            lambda x: cv2.convertScaleAbs(x, alpha=2.0, beta=50),
+            lambda x: cv2.threshold(x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
+            lambda x: cv2.adaptiveThreshold(x, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),
+            lambda x: cv2.convertScaleAbs(x, alpha=1.3, beta=20),
+            lambda x: cv2.threshold(x, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
+        ]
+    
+    def _get_ocr_configs(self):
+        """Return list of OCR page segmentation mode configs."""
+        return ['--psm 6', '--psm 7', '--psm 8', '--psm 11', '--psm 4']
+    
+    def _extract_numbers_from_region(self, region: np.ndarray, region_name: str) -> List[Dict]:
+        """Extract numbers from an image region using OCR with multiple strategies."""
+        import re
+        results = []
+        region_gray = cv2.cvtColor(region, cv2.COLOR_RGB2GRAY)
+        
+        for preprocess in self._get_ocr_preprocessing_steps():
+            try:
+                processed = preprocess(region_gray)
+                for ocr_config in self._get_ocr_configs():
+                    try:
+                        ocr_text = pytesseract.image_to_string(processed, config=ocr_config)
+                        numbers = re.findall(r'\d+\.?\d*', ocr_text)
+                        if numbers:
+                            float_numbers = [float(n) for n in numbers]
+                            valid_numbers = [n for n in float_numbers if 0 <= n <= MAX_REASONABLE_VALUE]
+                            if valid_numbers:
+                                results.append({
+                                    'region': region_name,
+                                    'config': ocr_config,
+                                    'numbers': valid_numbers,
+                                    'text': ocr_text.strip(),
+                                    'processed_image': processed.copy() if self.config.scale_debug else None
+                                })
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return results
+    
+    def _prepare_ocr_regions(self, img_array: np.ndarray, scale_region_dict: Dict[str, int], scale_region: np.ndarray) -> List[Tuple]:
+        """Prepare image regions for OCR analysis."""
+        height, width = img_array.shape[:2]
+        scale_height = scale_region_dict["bottom_y"] - scale_region_dict["top_y"]
+        
+        right_expansion = 50
+        expanded_right_x = min(width, scale_region_dict["right_x"] + right_expansion)
+        wider_right_x = min(width, scale_region_dict["right_x"] + 80)
+        
+        regions = [
+            (img_array[scale_region_dict["top_y"]:scale_region_dict["bottom_y"], 
+             scale_region_dict["left_x"]:wider_right_x], "full scale with labels"),
+            (img_array[int(scale_region_dict["top_y"] + scale_height * 0.9):scale_region_dict["bottom_y"],
+             scale_region_dict["left_x"]:expanded_right_x], "expanded bottom region"),
+            (scale_region[int(scale_height * 0.9):, :], "very bottom of scale"),
+            (scale_region[int(scale_height * 0.8):, :], "bottom of scale"),
+            (img_array[scale_region_dict["top_y"]:scale_region_dict["bottom_y"],
+             scale_region_dict["left_x"]:expanded_right_x], "expanded region"),
+            (scale_region, "full scale region")
+        ]
+        return regions
+    
     def _detect_scale_region(self, img_array: np.ndarray) -> Dict[str, int]:
         """
         Automatically detect the scale region on the right side of the image.
@@ -113,38 +229,21 @@ class ImageTransformer:
         
         # Start by looking at the rightmost portion of the image
         # Typically the scale is in the rightmost 10-15% of the image
-        right_start = int(width * 0.85)  # Start from 85% of width
-        right_end = width
+        right_start = int(width * SCALE_RIGHT_START_RATIO)
+        right_region = img_array[:, right_start:]
         
-        # Extract rightmost region
-        right_region = img_array[:, right_start:right_end]
-        
-        # Look for vertical gradient (characteristic of color scale)
-        # Convert to grayscale for analysis
         gray_region = cv2.cvtColor(right_region, cv2.COLOR_RGB2GRAY)
-        
-        # Calculate vertical gradient strength
-        # Strong vertical gradients indicate the scale
         sobel_y = cv2.Sobel(gray_region, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_strength = np.abs(sobel_y)
-        
-        # Find the column with strongest vertical gradient (likely the scale)
-        column_gradients = np.mean(gradient_strength, axis=0)
+        column_gradients = np.mean(np.abs(sobel_y), axis=0)
         scale_col_idx = np.argmax(column_gradients)
         
-        # Determine scale width (typically 20-50 pixels)
-        # Look for consistent gradient in nearby columns
-        scale_width = 40  # Default width
         actual_scale_x = right_start + scale_col_idx
-        
-        # Find top and bottom of scale (skip margins)
-        # Scale usually doesn't start at the very top/bottom
-        top_margin = int(height * 0.05)  # 5% margin from top
-        bottom_margin = int(height * 0.05)  # 5% margin from bottom
+        top_margin = int(height * SCALE_MARGIN_RATIO)
+        bottom_margin = int(height * SCALE_MARGIN_RATIO)
         
         return {
-            "left_x": max(0, actual_scale_x - scale_width // 2),
-            "right_x": min(width, actual_scale_x + scale_width // 2),
+            "left_x": max(0, actual_scale_x - SCALE_WIDTH // 2),
+            "right_x": min(width, actual_scale_x + SCALE_WIDTH // 2),
             "top_y": top_margin,
             "bottom_y": height - bottom_margin
         }
@@ -173,134 +272,24 @@ class ImageTransformer:
             scale_region_dict["left_x"]:scale_region_dict["right_x"]
         ]
         
-        # Store scale region for debug visualization
         self._last_scale_region = scale_region_dict
         self._last_scale_image = img_array.copy()
         
-        # Try to extract the max value using OCR
-        # Focus on the bottom portion of the scale where max value is displayed
-        scale_height = scale_region_dict["bottom_y"] - scale_region_dict["top_y"]
-        scale_width = scale_region_dict["right_x"] - scale_region_dict["left_x"]
-        
-        # Extract bottom portion (last 20% of scale height) where max value label should be
-        bottom_portion = scale_region[int(scale_height * 0.8):, :]
-        
-        # Also try a wider region to the right of the scale for number labels
-        # Numbers might be slightly to the right of the color bar
-        right_expansion = 50  # pixels to expand rightward (increased for better number capture)
-        expanded_right_x = min(width, scale_region_dict["right_x"] + right_expansion)
-        expanded_region = img_array[
-            scale_region_dict["top_y"]:scale_region_dict["bottom_y"],
-            scale_region_dict["left_x"]:expanded_right_x
-        ]
-        
-        # Also extract a region specifically at the very bottom (last 10% of height)
-        # where the max value label should be
-        very_bottom_start = int(scale_height * 0.9)
-        very_bottom_portion = scale_region[very_bottom_start:, :]
-        
-        # And an expanded bottom region (wider to catch labels to the right)
-        expanded_bottom_region = img_array[
-            int(scale_region_dict["top_y"] + scale_height * 0.9):scale_region_dict["bottom_y"],
-            scale_region_dict["left_x"]:expanded_right_x
-        ]
-        
-        # Collect ALL numbers from ALL regions and methods, then find the max
         all_found_numbers = []
-        ocr_results = []  # Store results for debugging
+        ocr_results = []
         
-        # Try OCR on multiple regions with different preprocessing
-        # Priority order: very bottom first (where max value should be), then expanded bottom, then others
-        ocr_regions = [
-            (expanded_bottom_region, "expanded bottom region"),
-            (very_bottom_portion, "very bottom of scale"),
-            (bottom_portion, "bottom of scale"),
-            (expanded_region, "expanded region"),
-            (scale_region, "full scale region")
-        ]
-        
-        # Also try reading the entire scale vertically to get all numbers
-        # Extract a wider region to the right that should contain all number labels
-        wider_right_expansion = 80  # Even wider to catch all labels
-        wider_right_x = min(width, scale_region_dict["right_x"] + wider_right_expansion)
-        full_scale_with_labels = img_array[
-            scale_region_dict["top_y"]:scale_region_dict["bottom_y"],
-            scale_region_dict["left_x"]:wider_right_x
-        ]
-        ocr_regions.insert(0, (full_scale_with_labels, "full scale with labels"))
-        
+        ocr_regions = self._prepare_ocr_regions(img_array, scale_region_dict, scale_region)
         for region, region_name in ocr_regions:
-            try:
-                # Convert to grayscale
-                region_gray = cv2.cvtColor(region, cv2.COLOR_RGB2GRAY)
-                
-                # Multiple preprocessing strategies
-                preprocessing_steps = [
-                    # Strategy 1: High contrast
-                    lambda x: cv2.convertScaleAbs(x, alpha=2.0, beta=50),
-                    # Strategy 2: Threshold
-                    lambda x: cv2.threshold(x, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
-                    # Strategy 3: Adaptive threshold
-                    lambda x: cv2.adaptiveThreshold(x, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2),
-                    # Strategy 4: Original with slight enhancement
-                    lambda x: cv2.convertScaleAbs(x, alpha=1.3, beta=20),
-                    # Strategy 5: Inverted threshold (for dark text on light background)
-                    lambda x: cv2.threshold(x, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
-                ]
-                
-                for preprocess in preprocessing_steps:
-                    try:
-                        processed = preprocess(region_gray)
-                        
-                        # Try different OCR page segmentation modes
-                        ocr_configs = [
-                            '--psm 6',  # Uniform block of text (good for vertical lists)
-                            '--psm 7',  # Treat image as single text line
-                            '--psm 8',  # Single word
-                            '--psm 11', # Sparse text
-                            '--psm 4',  # Single column of text (good for scales)
-                        ]
-                        
-                        for ocr_config in ocr_configs:
-                            try:
-                                ocr_text = pytesseract.image_to_string(processed, config=ocr_config)
-                                
-                                # Try to find numbers in the OCR text
-                                import re
-                                numbers = re.findall(r'\d+\.?\d*', ocr_text)
-                                
-                                if numbers:
-                                    # Get all numbers
-                                    float_numbers = [float(n) for n in numbers]
-                                    
-                                    # Filter out obviously wrong values (too small or too large)
-                                    # Scale values are typically in reasonable ranges
-                                    valid_numbers = [n for n in float_numbers if 0 <= n <= 1000]
-                                    
-                                    if valid_numbers:
-                                        all_found_numbers.extend(valid_numbers)
-                                        ocr_results.append({
-                                            'region': region_name,
-                                            'config': ocr_config,
-                                            'numbers': valid_numbers,
-                                            'text': ocr_text.strip(),
-                                            'processed_image': processed.copy() if self.config.scale_debug else None
-                                        })
-                            except Exception:
-                                continue
-                    except Exception:
-                        continue
-                        
-            except Exception as e:
-                continue
+            results = self._extract_numbers_from_region(region, region_name)
+            ocr_results.extend(results)
+            for result in results:
+                all_found_numbers.extend(result['numbers'])
         
         # Now find the maximum from all collected numbers
         max_value = None
         if all_found_numbers:
-            # Remove duplicates and sort
             unique_numbers = sorted(set(all_found_numbers))
-            # Filter to reasonable range
-            reasonable_numbers = [n for n in unique_numbers if 0 <= n <= 1000]
+            reasonable_numbers = [n for n in unique_numbers if 0 <= n <= MAX_REASONABLE_VALUE]
             
             if reasonable_numbers:
                 max_value = max(reasonable_numbers)
@@ -328,20 +317,9 @@ class ImageTransformer:
         if max_value is None:
             print(f"  OCR failed to extract max value, trying alternative method...")
         
-        # If OCR failed, try to estimate from color gradient
         if max_value is None:
-            # Analyze the color gradient
-            scale_height = scale_region_dict["bottom_y"] - scale_region_dict["top_y"]
-            scale_width = scale_region_dict["right_x"] - scale_region_dict["left_x"]
-            
-            # Sample colors from top (should be very dark blue/0) and bottom (should be yellow/max)
-            top_sample = scale_region[scale_height // 10, scale_width // 2]
-            bottom_sample = scale_region[scale_height - scale_height // 10, scale_width // 2]
-            
-            # For now, return a default max value
-            # In a real implementation, you might need to calibrate this
-            print(f"  Warning: Could not extract max value from scale, using default 100.0")
-            max_value = 100.0
+            print(f"  Warning: Could not extract max value from scale, using default {DEFAULT_MAX_VALUE}")
+            max_value = DEFAULT_MAX_VALUE
         
         return max_value, scale_region_dict
     
@@ -401,14 +379,10 @@ class ImageTransformer:
         
         print(f"  Found color bar at column {color_bar_x} of {scale_width} (gradient method: {int(np.argmax(column_gradients))}, variance method: {color_bar_x_by_variance})")
         
-        # Sample colors at regular intervals along the vertical axis
-        # Sample densely for accurate mapping
-        num_samples = 500
         scale_colors = []
         
-        for i in range(num_samples):
-            # Position from top (0.0) to bottom (1.0)
-            y_ratio = i / (num_samples - 1) if num_samples > 1 else 0.0
+        for i in range(SCALE_SAMPLE_COUNT):
+            y_ratio = i / (SCALE_SAMPLE_COUNT - 1) if SCALE_SAMPLE_COUNT > 1 else 0.0
             scale_y = int(y_ratio * scale_height)
             
             if 0 <= scale_y < scale_height:
@@ -654,12 +628,10 @@ class ImageTransformer:
         """
         height, width = img_array.shape[:2]
         
-        # Use fixed coordinates from scraper (based on rect.nsewdrag.drag element)
-        # These match the scraper's crop_image coordinates
-        left = 175
-        top = 100
-        right = 908  # 175 + 733
-        bottom = 664  # 100 + 564
+        left = GRAPH_LEFT
+        top = GRAPH_TOP
+        right = GRAPH_LEFT + GRAPH_WIDTH
+        bottom = GRAPH_TOP + GRAPH_HEIGHT
         
         # Validate coordinates are within image bounds
         left = max(0, min(left, width))
@@ -713,20 +685,10 @@ class ImageTransformer:
         graph_height = graph_region_dict["bottom_y"] - graph_region_dict["top_y"]
         graph_width = graph_region_dict["right_x"] - graph_region_dict["left_x"]
         
-        # 24 rows (hours 0-23), 70 columns (frequency bands)
-        num_rows = 24
-        num_cols = 70
+        freq_end = FREQ_START + NUM_COLS * FREQ_STEP
         
-        # Frequency bands: always use full range 3.1 to 3.45 for extraction
-        # Each band is exactly 0.005 GHz wide (3.100-3.105, 3.105-3.110, ..., 3.445-3.450)
-        # The config frequency range is only for display purposes
-        freq_start = 3.1
-        freq_step = 0.005  # Each frequency band is exactly 0.005 GHz wide
-        freq_end = freq_start + num_cols * freq_step  # 3.1 + 70 * 0.005 = 3.45
-        
-        # Calculate cell dimensions
-        cell_height = graph_height / num_rows
-        cell_width = graph_width / num_cols
+        cell_height = graph_height / NUM_ROWS
+        cell_width = graph_width / NUM_COLS
         
         data = []
         selected_pixels = []  # For debug visualization
@@ -734,7 +696,7 @@ class ImageTransformer:
         print(f"  Extracting data from graph region: ({graph_region_dict['left_x']}, {graph_region_dict['top_y']}) to ({graph_region_dict['right_x']}, {graph_region_dict['bottom_y']})")
         print(f"  Graph size: {graph_width} x {graph_height} pixels")
         print(f"  Cell size: {cell_width:.1f} x {cell_height:.1f} pixels per cell")
-        print(f"  Extracting {num_rows} rows x {num_cols} columns...")
+        print(f"  Extracting {NUM_ROWS} rows x {NUM_COLS} columns...")
         
         # Verify scale is set up
         if self.scale is None:
@@ -744,24 +706,14 @@ class ImageTransformer:
             raise RuntimeError(f"Scale colors are empty. Expected colors but got {len(scale_colors) if scale_colors else 0} colors.")
         print(f"  Scale has {len(scale_colors)} colors available")
         
-        for row_idx in range(num_rows):
-            # Row 0 is hour 23 (top), row 23 is hour 0 (bottom)
+        for row_idx in range(NUM_ROWS):
             hour = 23 - row_idx
-            
-            # Calculate y position: center of the row cell
-            # Cell boundaries: row_idx * cell_height to (row_idx + 1) * cell_height
-            # Center: row_idx * cell_height + cell_height / 2
             y_in_graph = int(row_idx * cell_height + cell_height / 2)
             y_in_image = graph_region_dict["top_y"] + y_in_graph
             
-            for col_idx in range(num_cols):
-                # Calculate frequency band
-                freq_band_start = freq_start + col_idx * freq_step
-                freq_band_end = freq_start + (col_idx + 1) * freq_step
-                
-                # Calculate x position: center of the column cell
-                # Cell boundaries: col_idx * cell_width to (col_idx + 1) * cell_width
-                # Center: col_idx * cell_width + cell_width / 2
+            for col_idx in range(NUM_COLS):
+                freq_band_start = FREQ_START + col_idx * FREQ_STEP
+                freq_band_end = FREQ_START + (col_idx + 1) * FREQ_STEP
                 x_in_graph = int(col_idx * cell_width + cell_width / 2)
                 x_in_image = graph_region_dict["left_x"] + x_in_graph
                 
@@ -802,20 +754,13 @@ class ImageTransformer:
             non_nan_count = df['value'].notna().sum()
             print(f"  Non-NaN values: {non_nan_count} out of {len(df)} total")
         
-        # Ensure we have all hours (0-23) and all frequency bands (1-70)
-        # Create a complete index and columns structure first
-        # Note: Hour 23 is at the top (first row), Hour 0 is at the bottom (last row)
-        all_hours = list(range(23, -1, -1))  # [23, 22, ..., 1, 0] - hour 23 first, hour 0 last
-        all_freq_bands = list(range(1, 71))
+        all_hours = list(range(23, -1, -1))
+        all_freq_bands = list(range(1, NUM_COLS + 1))
         
-        # Calculate frequency band labels (e.g., "3.1-3.105", "3.105-3.110", ...)
-        freq_band_labels = []
-        for col_idx in range(num_cols):
-            freq_band_start = freq_start + col_idx * freq_step
-            freq_band_end = freq_start + (col_idx + 1) * freq_step
-            # Format to 3 decimal places
-            label = f"{freq_band_start:.3f}-{freq_band_end:.3f}"
-            freq_band_labels.append(label)
+        freq_band_labels = [
+            f"{FREQ_START + col_idx * FREQ_STEP:.3f}-{FREQ_START + (col_idx + 1) * FREQ_STEP:.3f}"
+            for col_idx in range(NUM_COLS)
+        ]
         
         # Create empty dataframe with full structure (24 rows × 70 columns)
         df_pivot = pd.DataFrame(index=all_hours, columns=all_freq_bands, dtype=float)
@@ -1065,52 +1010,9 @@ def main():
                     print(f"✓ DataFrame extracted: {df.shape[0]} rows × {df.shape[1]} columns")
                     print(f"\n  DataFrame shape: {df.shape} (should be 24 rows × 70 columns)")
                     
-                    # Filter columns based on frequency range config for display
-                    # Column names are now in format "3.100-3.105", "3.105-3.110", etc.
-                    num_cols = 70  # Total number of frequency bands
-                    display_cols = []
-                    for col_name in df.columns:
-                        # Parse frequency range from column name (e.g., "3.100-3.105")
-                        try:
-                            freq_range = col_name.split('-')
-                            if len(freq_range) == 2:
-                                freq_band_start = float(freq_range[0])
-                                freq_band_end = float(freq_range[1])
-                                
-                                # Check if this band overlaps with the config range
-                                if (freq_band_end >= config.frequency_start and 
-                                    freq_band_start <= config.frequency_end):
-                                    display_cols.append(col_name)
-                        except (ValueError, IndexError):
-                            # Skip columns that don't match the expected format
-                            continue
+                    display_cols = transformer._filter_columns_by_frequency(df.columns, config.frequency_start, config.frequency_end)
                     
-                    # Filter dataframe to only show columns in the frequency range
-                    if display_cols and len(df) > 0:
-                        # Only filter if columns exist in dataframe
-                        existing_cols = [col for col in display_cols if col in df.columns]
-                        if existing_cols:
-                            df_display = df[existing_cols]
-                            print(f"\n  Displaying frequency range: {config.frequency_start} - {config.frequency_end} GHz")
-                            print(f"  ({len(existing_cols)} columns out of {num_cols} total)")
-                            print(f"\n  DataFrame preview (first 5 rows, filtered columns):")
-                            print(df_display.iloc[:5].to_string())
-                        else:
-                            df_display = df
-                            print(f"\n  No matching columns found in frequency range {config.frequency_start} - {config.frequency_end} GHz")
-                            print(f"  Showing first 10 columns instead:")
-                            if len(df.columns) > 0:
-                                print(df_display.iloc[:5, :min(10, len(df.columns))].to_string())
-                            else:
-                                print("  (DataFrame is empty)")
-                    else:
-                        df_display = df
-                        if len(df) > 0:
-                            print(f"\n  No columns found in frequency range {config.frequency_start} - {config.frequency_end} GHz")
-                            print(f"  Showing first 10 columns instead:")
-                            print(df_display.iloc[:5, :min(10, len(df.columns))].to_string())
-                        else:
-                            print(f"\n  DataFrame is empty - no data extracted")
+                    transformer._display_dataframe_preview(df, display_cols, config.frequency_start, config.frequency_end)
                     
                     print(f"\n  Value statistics (all data):")
                     # Flatten values for statistics (use full dataframe)
@@ -1125,12 +1027,16 @@ def main():
                     else:
                         print("    No valid values found")
                     
-                    # Print full filtered dataframe
                     if display_cols:
-                        print(f"\n  Full DataFrame (filtered to {config.frequency_start} - {config.frequency_end} GHz):")
-                        print(df_display.to_string())
+                        existing_cols = [col for col in display_cols if col in df.columns]
+                        if existing_cols:
+                            print(f"\n  Full DataFrame (filtered to {config.frequency_start} - {config.frequency_end} GHz):")
+                            print(df[existing_cols].to_string())
+                        else:
+                            print(f"\n  Full DataFrame (first 20 columns, all {NUM_COLS} columns available):")
+                            print(df.iloc[:, :20].to_string())
                     else:
-                        print(f"\n  Full DataFrame (first 20 columns, all 70 columns available in dataframe):")
+                        print(f"\n  Full DataFrame (first 20 columns, all {NUM_COLS} columns available):")
                         print(df.iloc[:, :20].to_string())
                     
                     # Add date column and reset index to make hour a column
