@@ -1,0 +1,34 @@
+# Transform Configuration
+
+# Date range for processing images (YYYY-MM-DD format)
+from_date: "2024-01-01"
+to_date: "2024-01-31"
+
+# Frequency range for console display (in GHz)
+# Only affects which columns are printed to console for readability
+# All 70 columns are still extracted, but only columns within this range are displayed
+frequency_start: 3.1
+frequency_end: 3.5
+
+# Color scale model to use (must match model_name from color_scale/config.yaml)
+# Model file will be loaded from data/models/{model_name}.pkl
+model_name: "alpha"
+
+# Path to folder containing preprocessed images
+preprocessed_folder: "data/preprocessed"
+
+# Path to folder for output images and data
+output_folder: "data/transformed"
+
+# Enable debug mode to visualize scale detection
+# When enabled, shows what scale region was identified for each image
+scale_debug: false
+
+# Enable debug mode for dataframe extraction
+# When enabled, shows the graph with selected pixels highlighted and their values
+debug_dataframe: false
+
+# Output file for combined DataFrame from all processed dates
+# Will be saved in the output_folder directory
+# Supports .parquet (recommended for ML) or .csv format
+output_data_file: "transformed_data.parquet"

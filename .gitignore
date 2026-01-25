@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Configuration (contains sensitive credentials)
+config.yaml
+
+# Captured images
+images/
+pre_processed_images/
+
+# Data directory
+data/
+!data/scale/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright
+.playwright/
+
+# Predictions
+prediction_results/
+
+# Transformed data
+transformed_images/
+transformed_data.parquet
+transformed_data.data.csv

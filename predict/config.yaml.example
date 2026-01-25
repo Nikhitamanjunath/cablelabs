@@ -1,0 +1,32 @@
+# Predict Configuration
+
+# Color scale model to use (must match model_name from color_scale/config.yaml)
+# Model file will be loaded from data/models/{model_name}.pkl
+model_name: "alpha"
+
+# Path to the transformed data file (CSV or Parquet) from transform step
+transformed_data_file: "data/transformed/transformed_data.parquet"
+
+# Path to preprocessed images folder (to get color scales)
+preprocessed_folder: "data/preprocessed"
+
+# Output folder for prediction results
+output_folder: "data/predictions"
+
+# Hyperparameters for online learning
+# Number of previous days to use for prediction
+lookback_days: 6
+
+# Learning rate for online learning (0.0 to 1.0)
+# Higher values give more weight to recent data
+learning_rate: 0.1
+
+# Prediction method: "linear", "exponential_smoothing", or "moving_average"
+prediction_method: "exponential_smoothing"
+
+# Alpha parameter for exponential smoothing (0.0 to 1.0)
+# Higher alpha = more weight to recent observations
+exponential_smoothing_alpha: 0.3
+
+# Enable visualization of predictions
+visualize_predictions: true

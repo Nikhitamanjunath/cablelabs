@@ -1,0 +1,72 @@
+version: '3'
+
+vars:
+  VENV_DIR: .venv
+  PYTHON: python3
+  PIP: '{{.VENV_DIR}}/bin/pip'
+  PYTHON_VENV: '{{.VENV_DIR}}/bin/python'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  venv:
+    desc: Create virtual environment if it doesn't exist
+    cmds:
+      - |
+        if [ ! -d {{.VENV_DIR}} ]; then
+          echo "Creating virtual environment..."
+          {{.PYTHON}} -m venv {{.VENV_DIR}}
+          echo "Virtual environment created at {{.VENV_DIR}}"
+        else
+          echo "Virtual environment already exists at {{.VENV_DIR}}"
+        fi
+
+  deps:
+    desc: Install Python dependencies from requirements.txt
+    deps: [venv]
+    cmds:
+      - echo "Installing dependencies from requirements.txt..."
+      - '{{.PIP}} install --upgrade pip'
+      - '{{.PIP}} install -r requirements.txt'
+      - echo "Dependencies installed successfully"
+
+  setup:
+    desc: Set up virtual environment and install all dependencies
+    deps: [venv, deps]
+    cmds:
+      - echo "Setup complete! Virtual environment ready at {{.VENV_DIR}}"
+
+  scrape:
+    desc: Run the scraper
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} scraper/scraper.py'
+
+  train-color-scale:
+    desc: Show color scale colors in increments (visualizes reference scale)
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} color_scale/train.py'
+
+  test-color-scale:
+    desc: Test color scale by extracting scales from preprocessed images
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} color_scale/test.py'
+
+  transform:
+    desc: Transform images to numeric dataframes
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} transform/transform.py'
+
+  predict:
+    desc: Predict next day's data using online learning
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} predict/predict.py'
+
+  
