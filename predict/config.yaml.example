@@ -1,9 +1,5 @@
 # Predict Configuration
 
-# Color scale model to use (must match model_name from color_scale/config.yaml)
-# Model file will be loaded from data/models/{model_name}.pkl
-model_name: "alpha"
-
 # Path to the transformed data file (CSV or Parquet) from transform step
 transformed_data_file: "data/transformed/transformed_data.parquet"
 
