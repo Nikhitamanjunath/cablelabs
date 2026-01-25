@@ -64,6 +64,9 @@ VOLATILITY_THRESHOLD = 0.35
 PEAK_DETECTION_THRESHOLD = 0.80
 MIN_LOOKBACK_FOR_PEAK = 4
 MAX_LOOKBACK_FOR_PEAK = 6
+# Scale detection constants (matching transform module)
+SCALE_RIGHT_START_RATIO = 0.85
+SCALE_MARGIN_RATIO = 0.05
 
 
 class PredictConfig(BaseModel):
@@ -396,6 +399,64 @@ class PredictionVisualizer:
         
         return resized_graph
     
+    def _detect_scale_region(self, img_array: np.ndarray) -> Dict[str, int]:
+        """
+        Automatically detect the scale region on the right side of the image.
+        Uses the same logic as the transform module.
+        
+        Args:
+            img_array: Image as numpy array
+            
+        Returns:
+            Dictionary with scale region coordinates
+        """
+        height, width = img_array.shape[:2]
+        
+        # Start by looking at the rightmost portion of the image
+        # Typically the scale is in the rightmost 10-15% of the image
+        right_start = int(width * SCALE_RIGHT_START_RATIO)
+        right_region = img_array[:, right_start:]
+        
+        gray_region = cv2.cvtColor(right_region, cv2.COLOR_RGB2GRAY)
+        sobel_y = cv2.Sobel(gray_region, cv2.CV_64F, 0, 1, ksize=3)
+        column_gradients = np.mean(np.abs(sobel_y), axis=0)
+        scale_col_idx = np.argmax(column_gradients)
+        
+        actual_scale_x = right_start + scale_col_idx
+        top_margin = int(height * SCALE_MARGIN_RATIO)
+        bottom_margin = int(height * SCALE_MARGIN_RATIO)
+        
+        return {
+            "left_x": max(0, actual_scale_x - SCALE_WIDTH // 2),
+            "right_x": min(width, actual_scale_x + SCALE_WIDTH // 2),
+            "top_y": top_margin,
+            "bottom_y": height - bottom_margin
+        }
+    
+    def extract_scale_region(self, img_array: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Extract the scale region from the original image (including labels).
+        
+        Args:
+            img_array: Full image array
+            
+        Returns:
+            Scale region image array or None if detection fails
+        """
+        try:
+            scale_region_dict = self._detect_scale_region(img_array)
+            
+            # Extract scale region (includes the color bar and labels)
+            scale_region = img_array[
+                scale_region_dict["top_y"]:scale_region_dict["bottom_y"],
+                scale_region_dict["left_x"]:scale_region_dict["right_x"]
+            ]
+            
+            return scale_region
+        except Exception as e:
+            print(f"  Warning: Failed to extract scale region: {e}")
+            return None
+    
     def _get_min_color(self, color_scale: ColorScale) -> Tuple[int, int, int]:
         """Get the minimum (darkest) color from the scale."""
         scale_colors = color_scale.get_scale_colors()
@@ -573,15 +634,24 @@ class PredictionVisualizer:
         error_map_height_estimate = (num_hours * ERROR_CELL_SIZE) if error_map is not None else 0
         stats_height = 30 if error_map is not None else 0
         
-        total_width = graph_width * 2 + SCALE_WIDTH + GAP + SCALE_GAP + PADDING * 2
+        effective_max = self.input_max_value if self.input_max_value is not None else DEFAULT_MAX_VALUE
+        original_img_array = self.load_original_image(date)
+        
+        # Determine actual scale width (may be wider if it includes labels)
+        # Extract scale region early to determine width
+        actual_scale_width = SCALE_WIDTH
+        scale_region = None
+        if original_img_array is not None:
+            scale_region = self.extract_scale_region(original_img_array)
+            if scale_region is not None:
+                actual_scale_width = scale_region.shape[1]
+        
+        total_width = graph_width * 2 + actual_scale_width + GAP + SCALE_GAP + PADDING * 2
         total_height = graph_height + error_map_height_estimate + stats_height + PADDING * 3 + 30 + error_map_gap
         
         # Create image
         img = Image.new('RGB', (total_width, total_height), color='white')
         draw = ImageDraw.Draw(img)
-        
-        effective_max = self.input_max_value if self.input_max_value is not None else DEFAULT_MAX_VALUE
-        original_img_array = self.load_original_image(date)
         orig_x_start = PADDING
         orig_y_start = PADDING + 25
         
@@ -655,15 +725,32 @@ class PredictionVisualizer:
         
         scale_x = pred_x_start + graph_width + SCALE_GAP
         scale_y_start = PADDING + 25
-        num_scale_samples = max(200, graph_height)
         
-        for i in range(num_scale_samples):
-            y_ratio = i / (num_scale_samples - 1) if num_scale_samples > 1 else 0.0
-            y = int(scale_y_start + y_ratio * graph_height)
-            value = (1.0 - y_ratio) * effective_max
-            color = self._get_color_for_value(value, color_scale, effective_max)
-            y_next = int(scale_y_start + ((i + 1) / num_scale_samples) * graph_height) if i < num_scale_samples - 1 else scale_y_start + graph_height
-            draw.rectangle([scale_x, y, scale_x + SCALE_WIDTH, y_next], fill=color)
+        # Use the scale region already extracted (or try again if not available)
+        if scale_region is None and original_img_array is not None:
+            scale_region = self.extract_scale_region(original_img_array)
+        
+        if scale_region is not None:
+            # Resize the scale region to match the graph height
+            scale_img = Image.fromarray(scale_region)
+            scale_height = graph_height
+            # Maintain aspect ratio, but use the detected width or a reasonable default
+            scale_region_width = scale_region.shape[1]
+            scale_img_resized = scale_img.resize((scale_region_width, scale_height), Image.Resampling.LANCZOS)
+            
+            # Paste the actual scale image (includes labels with max value)
+            img.paste(scale_img_resized, (scale_x, scale_y_start))
+        else:
+            # Fallback: generate scale if extraction failed
+            num_scale_samples = max(200, graph_height)
+            
+            for i in range(num_scale_samples):
+                y_ratio = i / (num_scale_samples - 1) if num_scale_samples > 1 else 0.0
+                y = int(scale_y_start + y_ratio * graph_height)
+                value = (1.0 - y_ratio) * effective_max
+                color = self._get_color_for_value(value, color_scale, effective_max)
+                y_next = int(scale_y_start + ((i + 1) / num_scale_samples) * graph_height) if i < num_scale_samples - 1 else scale_y_start + graph_height
+                draw.rectangle([scale_x, y, scale_x + SCALE_WIDTH, y_next], fill=color)
         
         # Add labels
         try:
