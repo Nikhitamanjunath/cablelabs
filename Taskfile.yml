@@ -69,6 +69,12 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} predict/predict.py'
 
+  visualize:
+    desc: Launch interactive web-based visualization viewer for prediction data
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} visualize/visualize.py'
+
   clean:
     desc: Remove generated files (keeps scale image, preprocessed images, and images directory)
     cmds:

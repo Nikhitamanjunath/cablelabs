@@ -9,6 +9,10 @@ preprocessed_folder: "data/preprocessed"
 # Output folder for prediction results
 output_folder: "data/predictions"
 
+# File to save all prediction data for interactive visualization
+# This file contains predicted values, confidence scores, actual values, and errors for all dates
+prediction_data_file: "data/predictions/predictions_data.parquet"
+
 # Hyperparameters for online learning
 # Number of previous days to use for prediction
 lookback_days: 6
@@ -18,3 +22,61 @@ prediction_method: "exponential_smoothing"
 
 # Enable visualization of predictions
 visualize_predictions: true
+
+# Confidence score hyperparameters
+# Weight for data availability component (0.0 to 1.0)
+# Higher = more weight on having more historical data
+confidence_data_weight: 0.4
+
+# Weight for variation component (0.0 to 1.0)
+# Higher = more weight on low coefficient of variation
+confidence_variation_weight: 0.3
+
+# Weight for trend consistency component (0.0 to 1.0)
+# Higher = more weight on consistent recent trends
+confidence_consistency_weight: 0.2
+
+# Weight for method reliability component (0.0 to 1.0)
+# Higher = more weight on method reliability
+confidence_method_weight: 0.1
+
+# Weight for historical accuracy component (0.0 to 1.0)
+# Higher = more weight on past prediction accuracy for this cell
+confidence_accuracy_weight: 0.3
+
+# Initial confidence for first prediction (when no accuracy history exists)
+# Should be lower since we don't know how accurate we'll be
+# This is used as a multiplier for the accuracy component when no history exists
+confidence_initial: 0.3
+
+# Minimum number of accuracy samples needed before using accuracy-based confidence
+# Until we have this many samples, use initial confidence
+confidence_min_samples: 3
+
+# Decay factor for historical accuracy (0.0 to 1.0)
+# Higher = more weight on recent accuracy, lower = equal weight on all history
+# 0.1 = very slow decay (long memory), 0.9 = very fast decay (short memory)
+confidence_accuracy_decay: 0.2
+
+# Confidence color coding thresholds (0.0 to 1.0)
+# These determine when to use green (high), yellow (medium), or red (low) colors
+# Green: confidence >= confidence_high_threshold
+# Yellow: confidence >= confidence_low_threshold and < confidence_high_threshold
+# Red: confidence < confidence_low_threshold
+confidence_high_threshold: 0.7
+confidence_low_threshold: 0.4
+
+# Anomaly detection hyperparameters
+# Method for detecting anomalies: "z_score" or "iqr"
+# z_score: Uses standard deviation (anomaly if |z-score| > threshold)
+# iqr: Uses interquartile range (anomaly if outside Q1-1.5*IQR or Q3+1.5*IQR)
+anomaly_method: "z_score"
+
+# Z-score threshold for anomaly detection
+# Values with |z-score| > this threshold are considered anomalies
+# Typical values: 2.0 (moderate), 2.5 (standard), 3.0 (strict)
+anomaly_z_score_threshold: 2.5
+
+# Minimum number of historical samples needed for anomaly detection
+# If fewer samples available, anomaly detection is skipped (returns False)
+anomaly_min_samples: 5

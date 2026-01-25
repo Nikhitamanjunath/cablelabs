@@ -8,3 +8,5 @@ pytesseract>=0.3.10
 opencv-python>=4.8.0
 pyarrow>=14.0.0
 matplotlib>=3.7.0
+dash>=2.14.0
+plotly>=5.17.0

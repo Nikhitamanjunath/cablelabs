@@ -1,0 +1,11 @@
+# Visualize Configuration
+
+# Path to prediction data file (created by predict task)
+# This file contains all prediction data: predicted values, confidence scores, actual values, and errors
+prediction_data_file: "data/predictions/predictions_data.parquet"
+
+# Port for the Dash web server
+port: 8050
+
+# Host for the Dash web server (use "0.0.0.0" to allow external access)
+host: "127.0.0.1"
