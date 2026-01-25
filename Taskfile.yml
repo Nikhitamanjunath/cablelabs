@@ -45,11 +45,11 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} scraper/scraper.py'
 
-  train-color-scale:
-    desc: Show color scale colors in increments (visualizes reference scale)
+  visualize-color-scale:
+    desc: Visualize the reference color scale with value increments
     deps: [deps]
     cmds:
-      - '{{.PYTHON_VENV}} color_scale/train.py'
+      - '{{.PYTHON_VENV}} color_scale/visualize.py'
 
   test-color-scale:
     desc: Test color scale by extracting scales from preprocessed images
@@ -82,22 +82,10 @@ tasks:
           rm -rf data/transformed
           echo "Removed data/transformed"
         fi
+        if [ -d "data/color_scale_test" ]; then
+          rm -rf data/color_scale_test
+          echo "Removed data/color_scale_test"
+        fi
         echo "Clean complete! Kept: data/scale, data/preprocessed, data/images"
-
-  clean-all:
-    desc: Remove all generated files including preprocessed images and images directory
-    deps: [clean]
-    cmds:
-      - |
-        echo "Performing total clean..."
-        if [ -d "data/preprocessed" ]; then
-          rm -rf data/preprocessed
-          echo "Removed data/preprocessed"
-        fi
-        if [ -d "data/images" ]; then
-          rm -rf data/images
-          echo "Removed data/images"
-        fi
-        echo "Total clean complete! Kept: data/scale"
 
   

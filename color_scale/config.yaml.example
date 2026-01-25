@@ -1,8 +1,4 @@
 # Color Scale Configuration
 
 # Number of preprocessed images to test when running test-color-scale task
-# This will go through the first n images and show their color scales
 num_test_images: 5
-
-# Default maximum value for the scale (used for training visualization)
-max_value: 60.0

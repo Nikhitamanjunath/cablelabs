@@ -88,44 +88,34 @@ class ColorScale:
         print(f"  Top color (max): {colors[0]}, Bottom color (0): {colors[-1]}")
         
         # Check if top color is black/dark (might be border/label, not part of scale)
-        # If so, find the first bright color (yellow) and use that as the actual top
-        top_color = colors[0]
-        top_brightness = (top_color[0] + top_color[1] + top_color[2]) / 3.0
-        
-        if top_brightness < 50:  # Top pixel is very dark (likely border/label)
+        top_brightness = sum(colors[0]) / 3.0
+        if top_brightness < 50:
             # Find the first bright yellow color (high R, high G, low B)
-            actual_top_idx = 0
             for i, color in enumerate(colors):
-                brightness = (color[0] + color[1] + color[2]) / 3.0
-                # Look for bright yellow: high R and G, relatively low B
-                is_yellow = (color[0] > 200 and color[1] > 200 and color[2] < 150 and brightness > 200)
-                if is_yellow:
-                    actual_top_idx = i
+                brightness = sum(color) / 3.0
+                if color[0] > 200 and color[1] > 200 and color[2] < 150 and brightness > 200:
+                    if i > 0:
+                        bright_color = colors[i]
+                        colors = [bright_color] * (i + 1) + colors[i + 1:]
+                        print(f"  Adjusted: Found bright color at pixel {i}, using it for top (max value)")
                     break
-            
-            if actual_top_idx > 0:
-                # Use colors from actual_top_idx onwards, pad with the bright color at the top
-                bright_color = colors[actual_top_idx]
-                # Prepend the bright color multiple times to ensure max value maps to bright yellow
-                colors = [bright_color] * (actual_top_idx + 1) + colors[actual_top_idx + 1:]
-                print(f"  Adjusted: Found bright color at pixel {actual_top_idx}, using it for top (max value)")
         
         print(f"  Final: Top color (max): {colors[0]}, Bottom color (0): {colors[-1]}")
         
         return colors
     
+    def _rgb_to_lab(self, rgb_color: Tuple[int, int, int]) -> np.ndarray:
+        """Convert RGB tuple to LAB color space."""
+        rgb = np.array([[rgb_color]], dtype=np.uint8)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)[0, 0]
+    
     def _build_lab_colors(self):
         """Convert RGB colors to LAB color space for perceptual matching."""
-        if self.reference_colors is None or len(self.reference_colors) == 0:
+        if not self.reference_colors:
             self._lab_colors = None
             return
         
-        self._lab_colors = []
-        for rgb_color in self.reference_colors:
-            rgb = np.array([[rgb_color]], dtype=np.uint8)
-            # Convert RGB to LAB using OpenCV
-            lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
-            self._lab_colors.append(lab[0, 0])
+        self._lab_colors = [self._rgb_to_lab(color) for color in self.reference_colors]
     
     def color_to_number(
         self, 
@@ -154,63 +144,30 @@ class ColorScale:
         max_value = input_max_value if input_max_value is not None else 60.0
         
         # If input scale is provided, match directly to input scale colors
-        if input_scale_colors and len(input_scale_colors) > 0 and input_max_value is not None:
-            # Convert input color to LAB for better perceptual matching
-            color_rgb = np.array(color, dtype=np.uint8)
-            rgb_uint8 = np.array([[color_rgb]], dtype=np.uint8)
-            color_lab = cv2.cvtColor(rgb_uint8, cv2.COLOR_RGB2LAB)[0, 0]
+        if input_scale_colors and input_max_value is not None:
+            color_lab = self._rgb_to_lab(color)
+            input_scale_lab = [self._rgb_to_lab(scale_color) for scale_color in input_scale_colors]
             
-            # Convert all input scale colors to LAB
-            input_scale_lab = []
-            for scale_color in input_scale_colors:
-                scale_rgb = np.array(scale_color, dtype=np.uint8)
-                scale_rgb_uint8 = np.array([[scale_rgb]], dtype=np.uint8)
-                scale_lab = cv2.cvtColor(scale_rgb_uint8, cv2.COLOR_RGB2LAB)[0, 0]
-                input_scale_lab.append(scale_lab)
-            
-            # Find closest color in input scale
             distances = np.array([np.linalg.norm(color_lab - lab_color) for lab_color in input_scale_lab])
             best_idx = np.argmin(distances)
-            best_distance = distances[best_idx]
             
-            # Use a lenient threshold - always return a value even if distance is large
-            # This ensures we can map any color to some position on the scale
-            # The distance check is mainly for debugging, but we'll still map it
-            
-            # Map position to value using linear mapping
-            # Position 0 (top) = max value, position len-1 (bottom) = 0
             num_colors = len(input_scale_colors)
             position_ratio = best_idx / (num_colors - 1) if num_colors > 1 else 0.0
-            value = (1.0 - position_ratio) * max_value
-            
-            # Clamp value to valid range
-            value = max(0.0, min(max_value, value))
-            
-            return value
-        else:
-            # No input scale provided, use reference scale directly
-            if self._lab_colors is None or len(self._lab_colors) == 0:
-                return None
-            
-            # Convert input color to LAB
-            color_rgb = np.array(color, dtype=np.uint8)
-            rgb_uint8 = np.array([[color_rgb]], dtype=np.uint8)
-            color_lab = cv2.cvtColor(rgb_uint8, cv2.COLOR_RGB2LAB)[0, 0]
-            
-            # Find closest color in reference scale
-            distances = np.array([np.linalg.norm(color_lab - lab_color) for lab_color in self._lab_colors])
-            best_idx = np.argmin(distances)
-            best_distance = distances[best_idx]
-            
-            # If distance is too large, might not be on scale
-            if best_distance > 50.0:
-                return None
-            
-            # Map position to value
-            position_ratio = best_idx / (len(self.reference_colors) - 1) if len(self.reference_colors) > 1 else 0.0
-            value = (1.0 - position_ratio) * max_value
-            
-            return value
+            return max(0.0, min(max_value, (1.0 - position_ratio) * max_value))
+        
+        # No input scale provided, use reference scale directly
+        if not self._lab_colors:
+            return None
+        
+        color_lab = self._rgb_to_lab(color)
+        distances = np.array([np.linalg.norm(color_lab - lab_color) for lab_color in self._lab_colors])
+        best_idx = np.argmin(distances)
+        
+        if distances[best_idx] > 50.0:
+            return None
+        
+        position_ratio = best_idx / (len(self.reference_colors) - 1) if len(self.reference_colors) > 1 else 0.0
+        return (1.0 - position_ratio) * max_value
     
     def number_to_color(self, value: float, max_value: float = 60.0) -> Tuple[int, int, int]:
         """
@@ -243,26 +200,13 @@ class ColorScale:
         # Clamp position_ratio to [0, 1]
         position_ratio = max(0.0, min(1.0, position_ratio))
         
-        # Special handling: if max value and top color is dark (black border/label),
-        # find the brightest yellow color instead
-        if value >= max_value * 0.99:  # Very close to or at max value
-            top_color = self.reference_colors[0]
-            top_brightness = (top_color[0] + top_color[1] + top_color[2]) / 3.0
-            
-            if top_brightness < 100:  # Top is dark, find brightest yellow
-                brightest_idx = 0
-                brightest_score = 0
-                for i, color in enumerate(self.reference_colors[:len(self.reference_colors)//2]):  # Check first half
-                    # Score for yellow: high R+G, relatively low B
-                    yellow_score = color[0] + color[1] - color[2]
-                    brightness = (color[0] + color[1] + color[2]) / 3.0
-                    combined_score = yellow_score + brightness
-                    if combined_score > brightest_score:
-                        brightest_score = combined_score
-                        brightest_idx = i
-                
-                # Map to the brightest yellow position
-                position_ratio = brightest_idx / (len(self.reference_colors) - 1) if len(self.reference_colors) > 1 else 0.0
+        # Special handling: if max value and top color is dark, find brightest yellow
+        if value >= max_value * 0.99 and sum(self.reference_colors[0]) / 3.0 < 100:
+            brightest_idx = max(
+                range(len(self.reference_colors) // 2),
+                key=lambda i: sum(self.reference_colors[i][:2]) - self.reference_colors[i][2] + sum(self.reference_colors[i]) / 3.0
+            )
+            position_ratio = brightest_idx / (len(self.reference_colors) - 1) if len(self.reference_colors) > 1 else 0.0
         
         # Map position to index in reference colors array
         num_colors = len(self.reference_colors)
@@ -322,11 +266,7 @@ class ColorScale:
         
         max_color = input_scale_colors[input_max_position]
         
-        # Find closest match in reference scale
-        max_color_rgb = np.array(max_color, dtype=np.uint8)
-        rgb_uint8 = np.array([[max_color_rgb]], dtype=np.uint8)
-        max_color_lab = cv2.cvtColor(rgb_uint8, cv2.COLOR_RGB2LAB)[0, 0]
-        
+        max_color_lab = self._rgb_to_lab(max_color)
         distances = np.array([np.linalg.norm(max_color_lab - lab_color) for lab_color in self._lab_colors])
         ref_max_position = np.argmin(distances)
         

@@ -9,6 +9,7 @@ and showing the color scale output for each one.
 import sys
 from pathlib import Path
 from typing import Tuple, Optional
+from collections import defaultdict
 import numpy as np
 from PIL import Image
 import yaml
@@ -16,7 +17,7 @@ import cv2
 import pytesseract
 import re
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for saving files
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from color_scale import ColorScale
@@ -44,26 +45,13 @@ def rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
 
 
 def find_brightest_yellow(scale_colors: list) -> tuple:
-    """
-    Find the brightest yellow color in the scale and its position.
-    
-    Returns:
-        Tuple of (position_index, color, brightness_score)
-    """
-    brightest_idx = 0
-    brightest_score = 0
-    
-    for i, color in enumerate(scale_colors):
-        # Score for yellow: high R+G, relatively low B, high brightness
-        yellow_score = color[0] + color[1] - color[2]
-        brightness = (color[0] + color[1] + color[2]) / 3.0
-        combined_score = yellow_score + brightness
-        
-        if combined_score > brightest_score:
-            brightest_score = combined_score
-            brightest_idx = i
-    
-    return (brightest_idx, scale_colors[brightest_idx], brightest_score)
+    """Find the brightest yellow color in the scale and its position."""
+    brightest_idx = max(
+        range(len(scale_colors)),
+        key=lambda i: sum(scale_colors[i][:2]) - scale_colors[i][2] + sum(scale_colors[i]) / 3.0
+    )
+    color = scale_colors[brightest_idx]
+    return (brightest_idx, color, sum(color[:2]) - color[2] + sum(color) / 3.0)
 
 
 def find_all_label_positions(img_array: np.ndarray, scale_region_dict: dict) -> list:
@@ -121,23 +109,13 @@ def find_all_label_positions(img_array: np.ndarray, scale_region_dict: dict) -> 
         except Exception:
             continue
     
-    # Remove duplicates and sort by position
-    # Group by value and take the average position for each value
-    value_to_positions = {}
+    # Group by value and average positions
+    value_to_positions = defaultdict(list)
     for value, pos in label_positions:
-        if value not in value_to_positions:
-            value_to_positions[value] = []
         value_to_positions[value].append(pos)
     
-    # Average positions for each value
-    unique_labels = []
-    for value, positions in value_to_positions.items():
-        avg_position = np.mean(positions)
-        unique_labels.append((value, avg_position))
-    
-    # Sort by position (top to bottom)
+    unique_labels = [(v, np.mean(positions)) for v, positions in value_to_positions.items()]
     unique_labels.sort(key=lambda x: x[1])
-    
     return unique_labels
 
 
@@ -325,21 +303,15 @@ def show_scale_for_image(image_path: Path, scale: ColorScale, input_scale_colors
         # Clamp position_ratio
         position_ratio = max(0.0, min(1.0, position_ratio))
         
-        # Get color from input scale at this position
-        # Input scale colors are ordered from top (index 0) to bottom (index -1)
-        num_input_colors = len(input_scale_colors)
-        position_idx = position_ratio * (num_input_colors - 1)
-        idx1 = int(np.clip(position_idx, 0, num_input_colors - 1))
-        idx2 = min(idx1 + 1, num_input_colors - 1)
-        frac = position_idx - idx1
-        frac = max(0.0, min(1.0, frac))
-        
         # Interpolate between adjacent colors in input scale
+        num_input_colors = len(input_scale_colors)
+        position_idx = np.clip(position_ratio * (num_input_colors - 1), 0, num_input_colors - 1)
+        idx1, idx2 = int(position_idx), min(int(position_idx) + 1, num_input_colors - 1)
+        frac = np.clip(position_idx - idx1, 0.0, 1.0)
+        
         color1 = np.array(input_scale_colors[idx1], dtype=np.float64)
         color2 = np.array(input_scale_colors[idx2], dtype=np.float64)
-        interpolated_color = color1 + (color2 - color1) * frac
-        interpolated_color = np.clip(interpolated_color, 0, 255)
-        color = tuple(interpolated_color.astype(np.uint8))
+        color = tuple(np.clip(color1 + (color2 - color1) * frac, 0, 255).astype(np.uint8))
         
         hex_color = rgb_to_hex(color)
         

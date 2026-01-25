@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Color Scale Trainer
+Color Scale Visualizer
 
-Shows sample colors and numbers based on a scale.
+Visualizes the reference color scale by showing colors at different value increments.
 Displays colors in increments of 5 (0, 5, 10, 15, ..., up to max_value).
-Goes pixel by pixel through the reference scale.
+Shows pixel-by-pixel information from the reference scale.
 """
 
 import sys
@@ -13,28 +13,23 @@ from typing import Tuple
 from PIL import Image, ImageDraw, ImageFont
 import argparse
 import matplotlib
-# Try to use an interactive backend
-backend_set = False
+plt = None
 for backend in ['TkAgg', 'Qt5Agg', 'MacOSX', 'QtAgg']:
     try:
         matplotlib.use(backend)
         import matplotlib.pyplot as plt
-        # Test if we can actually create a figure
-        fig = plt.figure()
-        plt.close(fig)
-        backend_set = True
+        plt.figure().close()  # Test backend
         print(f"  Using matplotlib backend: {backend}")
         break
     except Exception:
         continue
 
-if not backend_set:
+if plt is None:
     try:
         import matplotlib.pyplot as plt
         print("  Using default matplotlib backend")
     except Exception as e:
         print(f"  Warning: Could not set matplotlib backend: {e}")
-        plt = None
 
 import numpy as np
 
@@ -74,28 +69,15 @@ def show_colors_in_increments(max_value: float, increment: int = 5):
         values.append(current)
         current += increment
     
-    # Collect colors for visualization
     colors_list = []
-    colors_rgb_normalized = []
-    
-    # Show each color
     print(f"{'Value':<10} {'RGB':<20} {'Hex':<10} {'Color Preview'}")
     print("-" * 80)
     
     for value in values:
-        # Get color for this value
         color = scale.number_to_color(value, max_value=max_value)
         hex_color = rgb_to_hex(color)
-        
-        # Store for matplotlib
         colors_list.append((value, color, hex_color))
-        # Normalize RGB to [0, 1] for matplotlib
-        colors_rgb_normalized.append(tuple(c / 255.0 for c in color))
-        
-        # Create a simple text preview (using block characters)
-        preview = "█" * 10  # Simple block character
-        
-        print(f"{value:<10.1f} {str(color):<20} {hex_color:<10} {preview}")
+        print(f"{value:<10.1f} {str(color):<20} {hex_color:<10} {'█' * 10}")
     
     print("\n" + "="*60)
     print("Color Scale Visualization Complete")
@@ -113,39 +95,28 @@ def show_colors_in_increments(max_value: float, increment: int = 5):
         print(f"  Warning: Could not create matplotlib figure: {e}")
         return
     
-    # Create a grid of color swatches
-    num_colors = len(colors_list)
-    cols = 4  # Number of columns
-    rows = (num_colors + cols - 1) // cols  # Calculate rows needed
-    
-    swatch_size = 1.0
-    spacing = 0.1
+    cols, swatch_size, spacing = 4, 1.0, 0.1
+    rows = (len(colors_list) + cols - 1) // cols
     
     for idx, (value, color, hex_color) in enumerate(colors_list):
-        row = idx // cols
-        col = idx % cols
-        
-        # Calculate position
+        row, col = idx // cols, idx % cols
         x = col * (swatch_size + spacing)
-        y = (rows - row - 1) * (swatch_size + spacing)  # Flip vertically
+        y = (rows - row - 1) * (swatch_size + spacing)
         
-        # Draw color swatch
-        rect = plt.Rectangle(
+        ax.add_patch(plt.Rectangle(
             (x, y), swatch_size, swatch_size,
-            facecolor=colors_rgb_normalized[idx],
+            facecolor=tuple(c / 255.0 for c in color),
             edgecolor='black',
             linewidth=2
-        )
-        ax.add_patch(rect)
+        ))
         
-        # Add text label with value and hex
         ax.text(
             x + swatch_size / 2, y + swatch_size / 2,
             f"{value:.1f}\n{hex_color}",
             ha='center', va='center',
             fontsize=9,
             fontweight='bold',
-            color='white' if sum(color) < 400 else 'black'  # White text on dark colors
+            color='white' if sum(color) < 400 else 'black'
         )
     
     # Set axis limits and remove ticks
@@ -190,7 +161,7 @@ def show_colors_in_increments(max_value: float, increment: int = 5):
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Show color scale colors in increments")
+    parser = argparse.ArgumentParser(description="Visualize color scale colors in increments")
     parser.add_argument(
         '--max-value',
         type=float,
