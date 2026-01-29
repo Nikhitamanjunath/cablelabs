@@ -46,3 +46,9 @@ zero_error_threshold: 0.1
 anomaly_method: "z_score"
 anomaly_z_score_threshold: 2.5
 anomaly_min_samples: 5
+
+# Online learning (adaptive method and lookback)
+# State is persisted across runs so the learner improves over time
+online_learning_state_file: "data/online_learning_state.json"
+online_learning_exploration_epsilon: 0.1
+online_learning_lookback_candidates: [4, 5, 6, 7]

@@ -10,6 +10,7 @@ from .confidence import ConfidenceCalculator, ConfidenceConfig
 from .error import ErrorCalculator, ErrorConfig
 from .anomaly import AnomalyDetector, AnomalyConfig
 from .image_visualizer import ImageVisualizer, ImageVisualizerConfig
+from .online_learning import OnlineLearner, OnlineLearningConfig
 
 __all__ = [
     "main",
@@ -26,4 +27,6 @@ __all__ = [
     "AnomalyConfig",
     "ImageVisualizer",
     "ImageVisualizerConfig",
+    "OnlineLearner",
+    "OnlineLearningConfig",
 ]

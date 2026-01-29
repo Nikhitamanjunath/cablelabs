@@ -8,8 +8,11 @@ scoring to ConfidenceCalculator.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 import numpy as np
+
+if TYPE_CHECKING:
+    from .confidence import ConfidenceCalculator
 import pandas as pd
 from pydantic import BaseModel, Field
 
@@ -41,23 +44,83 @@ class Predictor:
         self.prediction_method = config.prediction_method
         self._confidence = confidence_calculator
 
-    def predict_next_day(self, historical_data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def predict_value_all_methods(
+        self, values: np.ndarray, hour: Optional[int], freq_col: Optional[str]
+    ) -> Dict[str, float]:
+        """
+        Compute predicted value for each method (exponential_smoothing, moving_average,
+        linear, peak_detection when applicable). Returns dict method_name -> predicted_value.
+        """
+        result: Dict[str, float] = {}
+        cfg = self.config
+        # Peak branch (when applicable)
+        if len(values) >= cfg.min_lookback_for_peak:
+            lookback = min(cfg.max_lookback_for_peak, len(values))
+            recent = values[-lookback:]
+            recent_max = np.max(recent)
+            recent_mean = np.mean(recent)
+            recent_std = np.std(recent)
+            if (
+                recent_max > recent_mean * cfg.peak_threshold_multiplier
+                and recent_std > recent_mean * cfg.volatility_threshold
+            ):
+                peak_threshold = recent_max * cfg.peak_detection_threshold
+                peak_positions = [i for i, v in enumerate(values) if v >= peak_threshold]
+                if peak_positions:
+                    peak_idx = peak_positions[-1]
+                    peak_value = values[peak_idx]
+                    positions_from_end = len(values) - 1 - peak_idx
+                    last_value = values[-1]
+                    if positions_from_end <= 1:
+                        pred = (
+                            (peak_value * 0.97 + last_value * 0.03)
+                            if last_value > recent_mean * cfg.peak_threshold_multiplier
+                            else peak_value * 0.97
+                        )
+                    elif positions_from_end <= 3:
+                        pred = peak_value * 0.94
+                    elif positions_from_end <= 5:
+                        pred = peak_value * 0.90
+                    else:
+                        pred = peak_value * 0.88
+                    result["peak_detection"] = max(0.0, float(pred))
+        # Standard methods
+        result["exponential_smoothing"] = max(0.0, float(self._exponential_smoothing(values)))
+        result["moving_average"] = max(0.0, float(self._moving_average(values)))
+        result["linear"] = max(0.0, float(self._linear_regression(values)))
+        return result
+
+    def predict_next_day(
+        self,
+        historical_data: pd.DataFrame,
+        online_learner: Optional[Any] = None,
+    ) -> Union[
+        Tuple[pd.DataFrame, pd.DataFrame],
+        Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[Tuple[int, str], Dict[str, float]]],
+    ]:
         """
         Predict the next day's data using historical data.
 
-        Returns:
-            Tuple of (predicted_df, confidence_df) - both DataFrames with same structure.
+        If online_learner is set, returns (predicted_df, confidence_df, method_df, all_predictions).
+        Otherwise returns (predicted_df, confidence_df) only.
         """
         freq_columns = [col for col in historical_data.columns if col not in ['date', 'hour']]
         hours = sorted(historical_data['hour'].unique())
 
         predictions = []
         confidences = []
+        method_rows: Optional[list] = None
+        all_predictions: Optional[Dict[Tuple[int, str], Dict[str, float]]] = None
+
+        if online_learner is not None:
+            method_rows = []
+            all_predictions = {}
 
         for hour in hours:
             hour_data = historical_data[historical_data['hour'] == hour]
             predicted_row = {'hour': hour}
             confidence_row = {'hour': hour}
+            method_row = {'hour': hour} if method_rows is not None else None
 
             for freq_col in freq_columns:
                 values = hour_data[freq_col].values
@@ -66,24 +129,57 @@ class Predictor:
                 if len(valid_values) == 0:
                     predicted_row[freq_col] = np.nan
                     confidence_row[freq_col] = 0.0
+                    if method_row is not None:
+                        method_row[freq_col] = ""
+                    if all_predictions is not None:
+                        all_predictions[(hour, freq_col)] = {}
                 elif len(valid_values) == 1:
                     predicted_row[freq_col] = valid_values[0]
                     confidence_row[freq_col] = 0.3
+                    if method_row is not None:
+                        method_row[freq_col] = "exponential_smoothing"
+                    if all_predictions is not None:
+                        all_predictions[(hour, freq_col)] = {"exponential_smoothing": float(valid_values[0])}
                 else:
-                    predicted, confidence = self._predict_value_with_confidence(
-                        valid_values, hour, freq_col
-                    )
-                    predicted = max(0.0, predicted)
-                    predicted_row[freq_col] = predicted
-                    confidence_row[freq_col] = confidence
+                    if online_learner is not None and method_rows is not None and all_predictions is not None:
+                        all_preds = self.predict_value_all_methods(valid_values, hour, freq_col)
+                        all_predictions[(hour, freq_col)] = all_preds
+                        chosen_method = online_learner.select_method(
+                            hour, freq_col, available_methods=list(all_preds.keys())
+                        )
+                        predicted = all_preds.get(chosen_method, all_preds["exponential_smoothing"])
+                        predicted = max(0.0, predicted)
+                        used_peak = chosen_method == "peak_detection"
+                        confidence = self._confidence.score(
+                            valid_values, predicted, used_peak, hour, freq_col
+                        )
+                        predicted_row[freq_col] = predicted
+                        confidence_row[freq_col] = confidence
+                        method_row[freq_col] = chosen_method
+                    else:
+                        predicted, confidence = self._predict_value_with_confidence(
+                            valid_values, hour, freq_col
+                        )
+                        predicted = max(0.0, predicted)
+                        predicted_row[freq_col] = predicted
+                        confidence_row[freq_col] = confidence
+                        if method_row is not None:
+                            method_row[freq_col] = self.prediction_method
 
             predictions.append(predicted_row)
             confidences.append(confidence_row)
+            if method_rows is not None and method_row is not None:
+                method_rows.append(method_row)
 
         pred_df = pd.DataFrame(predictions)
         conf_df = pd.DataFrame(confidences)
         pred_df = pred_df.sort_values('hour', ascending=False).reset_index(drop=True)
         conf_df = conf_df.sort_values('hour', ascending=False).reset_index(drop=True)
+
+        if online_learner is not None and method_rows is not None and all_predictions is not None:
+            method_df = pd.DataFrame(method_rows)
+            method_df = method_df.sort_values('hour', ascending=False).reset_index(drop=True)
+            return pred_df, conf_df, method_df, all_predictions
         return pred_df, conf_df
 
     def _predict_value_with_confidence(

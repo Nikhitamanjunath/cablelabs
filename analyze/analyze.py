@@ -27,6 +27,7 @@ from analyze.anomaly import AnomalyDetector, AnomalyConfig
 from analyze.confidence import ConfidenceCalculator, ConfidenceConfig
 from analyze.prediction import Predictor, PredictionConfig
 from analyze.image_visualizer import ImageVisualizer, ImageVisualizerConfig
+from analyze.online_learning import OnlineLearner, OnlineLearningConfig
 
 
 class AnalyzeConfig(BaseModel):
@@ -71,6 +72,17 @@ class AnalyzeConfig(BaseModel):
     anomaly_method: str = Field(default="z_score", description="z_score or iqr")
     anomaly_z_score_threshold: float = Field(default=2.5, ge=0.0)
     anomaly_min_samples: int = Field(default=5, ge=1)
+
+    # Online learning (adaptive method and lookback)
+    online_learning_state_file: str = Field(
+        default="data/online_learning_state.json",
+        description="Path to state file for online learning persistence",
+    )
+    online_learning_exploration_epsilon: float = Field(default=0.1, ge=0.0, le=1.0)
+    online_learning_lookback_candidates: list = Field(
+        default_factory=lambda: [4, 5, 6, 7],
+        description="Lookback values to learn; empty to disable lookback learning",
+    )
 
 
 def load_config(config_path: Optional[str] = None) -> AnalyzeConfig:
@@ -159,6 +171,15 @@ def run(config: AnalyzeConfig) -> None:
     confidence_calculator = ConfidenceCalculator(confidence_config, config.lookback_days)
     predictor = Predictor(prediction_config, confidence_calculator)
 
+    online_learning_config = OnlineLearningConfig(
+        state_file=config.online_learning_state_file,
+        exploration_epsilon=config.online_learning_exploration_epsilon,
+        lookback_candidates=config.online_learning_lookback_candidates,
+        default_lookback_days=config.lookback_days,
+        default_prediction_method=config.prediction_method,
+    )
+    online_learner = OnlineLearner(online_learning_config)
+
     image_visualizer: Optional[ImageVisualizer] = None
     if config.visualize_predictions:
         img_config = ImageVisualizerConfig(
@@ -171,20 +192,32 @@ def run(config: AnalyzeConfig) -> None:
 
     all_prediction_data = []
     predictions_made = 0
+    max_lookback = max(
+        config.lookback_days,
+        max(config.online_learning_lookback_candidates or [config.lookback_days]),
+    )
 
-    for i in range(config.lookback_days, len(dates)):
+    for i in range(max_lookback, len(dates)):
         target_date = dates[i]
         print(f"\n{'='*60}")
         print(f"Predicting for date: {target_date}")
         print(f"{'='*60}")
 
-        historical_dates = dates[max(0, i - config.lookback_days) : i]
+        lookback_used = online_learner.get_lookback_days()
+        historical_dates = dates[max(0, i - lookback_used) : i]
         historical_data = df[df["date"].isin(historical_dates)].copy()
-        print(f"  Using historical data from {len(historical_dates)} day(s): {historical_dates[0]} to {historical_dates[-1]}")
+        print(f"  Using historical data from {len(historical_dates)} day(s): {historical_dates[0]} to {historical_dates[-1]} (lookback={lookback_used})")
 
-        predicted_df, confidence_df = predictor.predict_next_day(historical_data)
+        result = predictor.predict_next_day(historical_data, online_learner=online_learner)
+        predicted_df = result[0]
+        confidence_df = result[1]
+        method_df = result[2] if len(result) > 2 else None
+        all_predictions = result[3] if len(result) > 3 else None
+
         predicted_df.insert(0, "date", target_date)
         confidence_df.insert(0, "date", target_date)
+        if method_df is not None:
+            method_df.insert(0, "date", target_date)
 
         actual_data = df[df["date"] == target_date].copy()
         actual_df = actual_data if len(actual_data) > 0 else None
@@ -192,6 +225,29 @@ def run(config: AnalyzeConfig) -> None:
         if actual_df is not None:
             print("  ✓ Actual data available for comparison")
             confidence_calculator.update_accuracy_history(predicted_df, actual_df)
+            if all_predictions is not None:
+                day_accuracies = []
+                actual_sorted = actual_df.sort_values("hour").reset_index(drop=True)
+                pred_sorted = predicted_df.sort_values("hour").reset_index(drop=True)
+                for row_idx in range(min(len(pred_sorted), len(actual_sorted))):
+                    pred_row = pred_sorted.iloc[row_idx]
+                    actual_row = actual_sorted.iloc[row_idx]
+                    hour = int(pred_row["hour"])
+                    for freq_col in [c for c in predicted_df.columns if c not in ["date", "hour"]]:
+                        actual_val = actual_row.get(freq_col)
+                        if actual_val is None or np.isnan(actual_val):
+                            continue
+                        cell_preds = all_predictions.get((hour, freq_col), {})
+                        for method_name, pred_val in cell_preds.items():
+                            if pred_val is not None and not np.isnan(pred_val):
+                                online_learner.record_result(hour, freq_col, method_name, float(actual_val), float(pred_val))
+                        pred_val = pred_row.get(freq_col)
+                        if pred_val is not None and not np.isnan(pred_val):
+                            acc = 1.0 - error_calculator.normalized_error(float(actual_val), float(pred_val))
+                            day_accuracies.append(max(0.0, min(1.0, acc)))
+                if day_accuracies:
+                    online_learner.record_lookback_result(lookback_used, sum(day_accuracies) / len(day_accuracies))
+            online_learner.save()
             print("  ✓ Updated accuracy history for online learning")
         else:
             print(f"  ⚠ No actual data available for {target_date}")
@@ -222,17 +278,24 @@ def run(config: AnalyzeConfig) -> None:
         freq_columns = [col for col in predicted_df.columns if col not in ["date", "hour"]]
         pred_sorted = predicted_df.sort_values("hour").reset_index(drop=True)
         conf_sorted = confidence_df.sort_values("hour").reset_index(drop=True)
+        method_sorted = method_df.sort_values("hour").reset_index(drop=True) if method_df is not None else None
         historical_data_for_anomaly = df[df["date"].isin(historical_dates)].copy()
 
         for row_idx in range(len(pred_sorted)):
             pred_row = pred_sorted.iloc[row_idx]
             conf_row = conf_sorted.iloc[row_idx]
+            method_row = method_sorted.iloc[row_idx] if method_sorted is not None else None
             date_val = pred_row["date"]
             hour = int(pred_row["hour"])
 
             for freq_col in freq_columns:
                 predicted_val = pred_row.get(freq_col)
                 confidence_val = conf_row.get(freq_col)
+                prediction_method_used = (
+                    method_row.get(freq_col, config.prediction_method)
+                    if method_row is not None
+                    else config.prediction_method
+                )
 
                 is_anomaly = False
                 if predicted_val is not None and not np.isnan(predicted_val):
@@ -267,6 +330,7 @@ def run(config: AnalyzeConfig) -> None:
                     "actual": float(actual_val) if actual_val is not None and not np.isnan(actual_val) else None,
                     "error": float(error_val) if error_val is not None and not np.isnan(error_val) else None,
                     "is_anomaly": is_anomaly,
+                    "prediction_method": prediction_method_used if isinstance(prediction_method_used, str) else config.prediction_method,
                 })
 
         predictions_made += 1

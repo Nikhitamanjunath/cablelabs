@@ -374,6 +374,11 @@ def main():
             x_tickvals = list(range(0, len(freq_bands), max(1, len(freq_bands) // 10)))
             x_ticktext = [freq_bands[i] for i in x_tickvals]
             
+            # Build lookup for prediction_method if present (from online learning)
+            method_lookup = {}
+            if 'prediction_method' in date_data.columns:
+                for _, r in date_data.iterrows():
+                    method_lookup[(int(r['hour']), r['frequency_band'])] = r.get('prediction_method', '')
             # Create custom hover text matrix with proper frequency band labels
             hover_text = []
             for hour_idx in range(len(hours)):
@@ -382,17 +387,21 @@ def main():
                     value = matrix[hour_idx, freq_idx]
                     hour = hours[hour_idx]
                     freq_band = freq_bands[freq_idx]
+                    method_str = ""
+                    if method_lookup:
+                        method_str = method_lookup.get((hour, freq_band), '')
+                        method_str = f"<br>Method: {method_str}" if method_str else ""
                     if view_mode == 'anomaly':
                         # Special handling for anomaly view
                         if not np.isnan(value):
                             status = "Anomaly" if value >= 0.5 else "Normal"
-                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: {status}")
+                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: {status}{method_str}")
                         else:
-                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: N/A")
+                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: N/A{method_str}")
                     elif not np.isnan(value):
-                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: {value:.2f}")
+                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: {value:.2f}{method_str}")
                     else:
-                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: N/A")
+                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: N/A{method_str}")
                 hover_text.append(row)
             
             # Create heatmap with numeric x-axis (we'll label it with frequency bands)
