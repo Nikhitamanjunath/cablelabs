@@ -261,7 +261,25 @@ def calculate_stats(df: pd.DataFrame, selected_date: str) -> dict:
         # Zero error percentage (errors < 0.1)
         zero_error_count = (abs_errors < 0.1).sum()
         stats['zero_error_percentage'] = float((zero_error_count / len(errors)) * 100.0)
-    
+
+    # ML prediction error metrics (from actual vs predicted pairs)
+    mask = date_data['actual'].notna() & date_data['predicted'].notna()
+    if mask.sum() > 0:
+        actual_vals = date_data.loc[mask, 'actual'].astype(float).values
+        pred_vals = date_data.loc[mask, 'predicted'].astype(float).values
+        residuals = actual_vals - pred_vals
+        abs_res = np.abs(residuals)
+        stats['mae'] = float(np.mean(abs_res))
+        stats['rmse'] = float(np.sqrt(np.mean(residuals ** 2)))
+        stats['bias'] = float(np.mean(residuals))
+        stats['medae'] = float(np.median(abs_res))
+        ss_res = np.sum(residuals ** 2)
+        ss_tot = np.sum((actual_vals - np.mean(actual_vals)) ** 2)
+        if ss_tot > 0:
+            stats['r2'] = float(1.0 - ss_res / ss_tot)
+        if len(actual_vals) > 1 and np.std(actual_vals) > 0 and np.std(pred_vals) > 0:
+            stats['pearson_r'] = float(np.corrcoef(actual_vals, pred_vals)[0, 1])
+
     # Anomaly statistics
     if 'is_anomaly' in date_data.columns:
         anomalies = date_data['is_anomaly']
@@ -474,7 +492,46 @@ def main():
                         html.Strong("Zero Error: "),
                         html.Span(f"{stats['zero_error_percentage']:.1f}%")
                     ], style={'display': 'inline-block'}))
-            
+
+            # Prediction error metrics (ML) subsection
+            ml_elements = []
+            if 'mae' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("MAE: "),
+                    html.Span(f"{stats['mae']:.2f}")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+            if 'rmse' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("RMSE: "),
+                    html.Span(f"{stats['rmse']:.2f}")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+            if 'r2' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("R²: "),
+                    html.Span(f"{stats['r2']:.3f}")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+            if 'bias' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("Bias: "),
+                    html.Span(f"{stats['bias']:.2f}")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+            if 'medae' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("MedAE: "),
+                    html.Span(f"{stats['medae']:.2f}")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+            if 'pearson_r' in stats:
+                ml_elements.append(html.Div([
+                    html.Strong("Pearson r: "),
+                    html.Span(f"{stats['pearson_r']:.3f}")
+                ], style={'display': 'inline-block'}))
+
+            if ml_elements:
+                stats_elements.append(html.Div([
+                    html.H4("Prediction error metrics (ML)", style={'marginTop': '15px', 'marginBottom': '8px'}),
+                    html.Div(ml_elements)
+                ]))
+
             stats_display = html.Div([
                 html.H3("Statistics", style={'marginBottom': '10px'}),
                 html.Div(stats_elements)
