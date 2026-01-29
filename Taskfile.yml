@@ -63,11 +63,11 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} transform/transform.py'
 
-  predict:
-    desc: Predict next day's data using online learning
+  analyze:
+    desc: Run analysis (prediction, confidence, error, anomaly) and produce output for visualize
     deps: [deps]
     cmds:
-      - '{{.PYTHON_VENV}} predict/predict.py'
+      - '{{.PYTHON_VENV}} analyze/analyze.py'
 
   visualize:
     desc: Launch interactive web-based visualization viewer for prediction data

@@ -1,0 +1,48 @@
+# Analyze Configuration
+
+# Path to the transformed data file (CSV or Parquet) from transform step
+transformed_data_file: "data/transformed/transformed_data.parquet"
+
+# Path to preprocessed images folder (to get color scales)
+preprocessed_folder: "data/preprocessed"
+
+# Output folder for prediction results
+output_folder: "data/predictions"
+
+# File to save all prediction data for interactive visualization
+# This file is consumed by the visualize module
+prediction_data_file: "data/predictions/predictions_data.parquet"
+
+# Hyperparameters for prediction
+lookback_days: 6
+prediction_method: "exponential_smoothing"
+
+# Enable PNG visualization (original vs predicted, error map, confidence map)
+visualize_predictions: true
+
+# Prediction peak-detection hyperparameters
+peak_threshold_multiplier: 1.5
+volatility_threshold: 0.35
+peak_detection_threshold: 0.80
+min_lookback_for_peak: 4
+max_lookback_for_peak: 6
+
+# Confidence score hyperparameters
+confidence_data_weight: 0.4
+confidence_variation_weight: 0.3
+confidence_consistency_weight: 0.2
+confidence_method_weight: 0.1
+confidence_accuracy_weight: 0.3
+confidence_initial: 0.5
+confidence_min_samples: 3
+confidence_accuracy_decay: 0.2
+confidence_high_threshold: 0.7
+confidence_low_threshold: 0.4
+
+# Error hyperparameters (zero_error_threshold used for stats)
+zero_error_threshold: 0.1
+
+# Anomaly detection hyperparameters
+anomaly_method: "z_score"
+anomaly_z_score_threshold: 2.5
+anomaly_min_samples: 5

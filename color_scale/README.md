@@ -123,4 +123,4 @@ The module ensures accurate conversions through several key mechanisms:
 
 The `ColorScale` class is used by:
 - **`transform/transform.py`** - Extracts numeric data from preprocessed images
-- **`predict/predict.py`** - Generates visualization images from predicted values
+- **`analyze/image_visualizer.py`** - Generates visualization images from predicted values

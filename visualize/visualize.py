@@ -189,13 +189,13 @@ def create_heatmap_data(df: pd.DataFrame, selected_date: str, view_mode: str) ->
     
     # Determine color scale and range based on view mode
     if view_mode == 'confidence':
-        # Confidence: 0.0 to 1.0, use blue-purple-pink scale (cooler colors)
+        # Confidence: 0.0 to 1.0, use green-yellow-red scale with darker shades
+        # Red: below 0.7 (70%), Yellow: 0.7-0.9 (70%-90%), Green: 0.9+ (90%+)
         color_scale = [
-            [0, 'rgb(50, 50, 150)'],  # Dark blue (low)
-            [0.25, 'rgb(100, 50, 200)'],  # Purple
-            [0.5, 'rgb(150, 50, 200)'],  # Light purple
-            [0.75, 'rgb(200, 100, 255)'],  # Pink-purple
-            [1.0, 'rgb(255, 150, 255)']  # Bright pink (high)
+            [0, 'rgb(180, 0, 0)'],  # Dark red (low, below 70%)
+            [0.7, 'rgb(200, 180, 0)'],  # Dark yellow (medium, 70%-90%)
+            [0.9, 'rgb(0, 150, 0)'],  # Dark green (high, 90%+)
+            [1.0, 'rgb(0, 200, 0)']  # Darker bright green (very high)
         ]
         value_range = [0.0, 1.0]
         title = f"{selected_date} - Confidence Scores"

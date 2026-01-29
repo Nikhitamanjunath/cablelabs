@@ -1,6 +1,6 @@
 # Visualize Configuration
 
-# Path to prediction data file (created by predict task)
+# Path to prediction data file (created by analyze task)
 # This file contains all prediction data: predicted values, confidence scores, actual values, and errors
 prediction_data_file: "data/predictions/predictions_data.parquet"
 

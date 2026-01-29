@@ -34,8 +34,8 @@ The server will start and display a URL (default: http://127.0.0.1:8050). Open t
 
 ### Prerequisites
 
-1. Run `task predict` first to generate prediction data
-2. The prediction data file must exist (configured in `predict/config.yaml` as `prediction_data_file`)
+1. Run `task analyze` first to generate prediction data
+2. The prediction data file must exist (configured in `analyze/config.yaml` as `prediction_data_file`)
 
 ## Features
 
@@ -72,7 +72,7 @@ Displays at the bottom of the screen:
 Create `visualize/config.yaml` from `visualize/config.yaml.example`:
 
 ```yaml
-# Path to prediction data file (created by predict task)
+# Path to prediction data file (created by analyze task)
 prediction_data_file: "data/predictions/predictions_data.parquet"
 
 # Port for the Dash web server
@@ -85,7 +85,7 @@ host: "127.0.0.1"
 
 ### Configuration Values
 
-- **`prediction_data_file`**: Path to the prediction data file created by the `predict` task. Must match the `prediction_data_file` value in `predict/config.yaml`.
+- **`prediction_data_file`**: Path to the prediction data file created by the `analyze` task. Must match the `prediction_data_file` value in `analyze/config.yaml`.
 - **`port`**: Port number for the web server (default: 8050)
 - **`host`**: Host address (default: "127.0.0.1" for local access, use "0.0.0.0" for network access)
 
@@ -111,6 +111,6 @@ The prediction data file contains one row per (date, hour, frequency_band) with 
 ## Integration
 
 The visualize module uses:
-- **`predict/predict.py`** - For generating prediction data files
+- **`analyze/analyze.py`** - For generating prediction data files
 
-The prediction data file is created automatically when you run `task predict`.
+The prediction data file is created automatically when you run `task analyze`.

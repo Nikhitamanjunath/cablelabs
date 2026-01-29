@@ -147,7 +147,7 @@ Each cell contains the numeric value extracted from the corresponding pixel colo
 ## Integration
 
 The transform module is used by:
-- **`predict/predict.py`** - Uses transformed data for predictions
+- **`analyze/analyze.py`** - Uses transformed data for analysis (prediction, confidence, error, anomaly)
 
 ## Dependencies
 
