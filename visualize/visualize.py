@@ -288,7 +288,13 @@ def calculate_stats(df: pd.DataFrame, selected_date: str) -> dict:
             total_cells = len(anomalies)
             stats['anomaly_count'] = int(anomaly_count)
             stats['anomaly_percentage'] = float((anomaly_count / total_cells) * 100.0) if total_cells > 0 else 0.0
-    
+
+    # Lookback (past n days used for prediction; same for all cells on this date)
+    if 'lookback_days' in date_data.columns:
+        lb = date_data['lookback_days'].dropna()
+        if len(lb) > 0:
+            stats['lookback_days'] = int(lb.iloc[0])
+
     return stats
 
 
@@ -397,6 +403,12 @@ def main():
             if 'prediction_method' in date_data.columns:
                 for _, r in date_data.iterrows():
                     method_lookup[(int(r['hour']), r['frequency_band'])] = r.get('prediction_method', '')
+            # Lookback for this date (same for all cells)
+            lookback_str = ""
+            if 'lookback_days' in date_data.columns:
+                lb = date_data['lookback_days'].dropna()
+                if len(lb) > 0:
+                    lookback_str = f"<br>Lookback: {int(lb.iloc[0])} days"
             # Create custom hover text matrix with proper frequency band labels
             hover_text = []
             for hour_idx in range(len(hours)):
@@ -409,17 +421,18 @@ def main():
                     if method_lookup:
                         method_str = method_lookup.get((hour, freq_band), '')
                         method_str = f"<br>Method: {method_str}" if method_str else ""
+                    suffix = method_str + lookback_str
                     if view_mode == 'anomaly':
                         # Special handling for anomaly view
                         if not np.isnan(value):
                             status = "Anomaly" if value >= 0.5 else "Normal"
-                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: {status}{method_str}")
+                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: {status}{suffix}")
                         else:
-                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: N/A{method_str}")
+                            row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Status: N/A{suffix}")
                     elif not np.isnan(value):
-                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: {value:.2f}{method_str}")
+                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: {value:.2f}{suffix}")
                     else:
-                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: N/A{method_str}")
+                        row.append(f"Hour: {hour}<br>Frequency: {freq_band}<br>Value: N/A{suffix}")
                 hover_text.append(row)
             
             # Create heatmap with numeric x-axis (we'll label it with frequency bands)
@@ -469,6 +482,12 @@ def main():
                 stats_elements.append(html.Div([
                     html.Strong("Anomalies: "),
                     html.Span(f"{stats['anomaly_count']} ({stats['anomaly_percentage']:.1f}%)")
+                ], style={'marginRight': '30px', 'display': 'inline-block'}))
+
+            if 'lookback_days' in stats:
+                stats_elements.append(html.Div([
+                    html.Strong("Lookback: "),
+                    html.Span(f"{stats['lookback_days']} days")
                 ], style={'marginRight': '30px', 'display': 'inline-block'}))
             
             if 'mean_error' in stats:

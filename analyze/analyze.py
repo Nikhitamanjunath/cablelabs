@@ -331,6 +331,7 @@ def run(config: AnalyzeConfig) -> None:
                     "error": float(error_val) if error_val is not None and not np.isnan(error_val) else None,
                     "is_anomaly": is_anomaly,
                     "prediction_method": prediction_method_used if isinstance(prediction_method_used, str) else config.prediction_method,
+                    "lookback_days": lookback_used,
                 })
 
         predictions_made += 1
