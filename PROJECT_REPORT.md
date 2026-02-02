@@ -189,3 +189,15 @@ The best performer is the **tuned blend** (MAE 2.4041, MASE 0.9935), slightly be
 
 We use the **Diebold–Mariano (DM) test** to test whether one model has significantly different MAE than another. For two error sequences we form *d*_t = |*e*₁_t| − |*e*₂_t| and compute DM = *d̄*/(σ_d/√*n*); under equal accuracy this is approximately standard normal. We report a two-sided *p*-value; *p* < 0.05 means we reject equal accuracy. DM > 0 ⇒ first model worse (second has lower MAE); DM < 0 ⇒ first model better. In the notebook we merge predictions on (datetime, frequency_band), run pairwise DM for selected model pairs, and report *n*, DM, *p*, and which model has lower MAE.
 
+### 4.6 Winner (Tuned Blend) Visualization
+
+The winning model (tuned blend) can be visualized via the *analyze-winner* and *visualize-winner* tasks, which produce predicted and actual heatmaps for any selected day. Figures 15 and 16 show example winner predicted and actual grids for the same day. Note that the predicted heatmap often appears **shifted downward** relative to the actual: because the tuned blend gives high weight to the previous hour (α ∈ [0.97, 1]), each row of the prediction is strongly influenced by the row above (last hour), so patterns in the actual data tend to appear shifted down by one hour in the prediction.
+
+**Figure 15.** Example winner predicted (Tuned blend) for one day (grid: hours × frequency bands).
+
+![Example winner predicted](report_images/example_winner_predicted.png)
+
+**Figure 16.** Example winner actual for the same day (grid: hours × frequency bands).
+
+![Example winner actual](report_images/example_winner_actual.png)
+
