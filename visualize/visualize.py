@@ -46,6 +46,10 @@ class VisualizeConfig(BaseModel):
         default="127.0.0.1",
         description="Host for the Dash web server"
     )
+    winner_mode: bool = Field(
+        default=False,
+        description="If true, show only Predicted, Actual, Error (no Confidence, Anomaly)"
+    )
 
 
 def load_config(config_path: Optional[str] = None) -> VisualizeConfig:
@@ -300,33 +304,55 @@ def calculate_stats(df: pd.DataFrame, selected_date: str) -> dict:
 
 def main():
     """Main entry point for interactive visualization."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Interactive prediction data viewer")
+    parser.add_argument("--config", default=None, help="Path to config YAML (default: visualize/config.yaml)")
+    args = parser.parse_args()
+
     try:
         print("Loading configuration...")
-        config = load_config()
+        config = load_config(config_path=args.config)
         print("✓ Configuration loaded")
-        
+        if config.winner_mode:
+            print("  Mode: Winner (Predicted, Actual, Error only)")
+
         # Load prediction data
         print(f"\nLoading prediction data from: {config.prediction_data_file}")
         data_file = Path(config.prediction_data_file)
         df = load_prediction_data(data_file)
         print(f"✓ Loaded {len(df)} data points")
-        
-        # Get available dates
-        available_dates = sorted(df['date'].unique())
+
+        # Get available dates (ensure string for dropdown)
+        available_dates = sorted(df['date'].astype(str).unique())
         print(f"  Available dates: {len(available_dates)}")
         print(f"  Date range: {available_dates[0]} to {available_dates[-1]}")
-        
+
         if len(available_dates) == 0:
             print("✗ Error: No prediction data found")
             return
-        
+
+        view_options = [
+            {'label': 'Predicted', 'value': 'predicted'},
+            {'label': 'Actual', 'value': 'actual'},
+            {'label': 'Error', 'value': 'error'},
+        ]
+        if not config.winner_mode:
+            view_options = [
+                {'label': 'Predicted', 'value': 'predicted'},
+                {'label': 'Confidence', 'value': 'confidence'},
+                {'label': 'Actual', 'value': 'actual'},
+                {'label': 'Error', 'value': 'error'},
+                {'label': 'Anomaly', 'value': 'anomaly'}
+            ]
+
         # Initialize Dash app
         app = dash.Dash(__name__)
-        
+        title = "Winner (Tuned Blend) Prediction Viewer" if config.winner_mode else "Prediction Data Interactive Viewer"
+
         # App layout
         app.layout = html.Div([
-            html.H1("Prediction Data Interactive Viewer", style={'textAlign': 'center', 'marginBottom': '20px'}),
-            
+            html.H1(title, style={'textAlign': 'center', 'marginBottom': '20px'}),
+
             html.Div([
                 html.Label("Select Date:", style={'marginRight': '10px', 'fontWeight': 'bold'}),
                 dcc.Dropdown(
@@ -339,13 +365,7 @@ def main():
                 html.Label("View Mode:", style={'marginRight': '10px', 'fontWeight': 'bold'}),
                 dcc.RadioItems(
                     id='view-toggle',
-                    options=[
-                        {'label': 'Predicted', 'value': 'predicted'},
-                        {'label': 'Confidence', 'value': 'confidence'},
-                        {'label': 'Actual', 'value': 'actual'},
-                        {'label': 'Error', 'value': 'error'},
-                        {'label': 'Anomaly', 'value': 'anomaly'}
-                    ],
+                    options=view_options,
                     value='predicted',
                     inline=True,
                     style={'display': 'inline-block'}
@@ -471,25 +491,26 @@ def main():
             # Calculate and display stats
             stats = calculate_stats(df, selected_date)
             stats_elements = []
-            
-            if 'mean_confidence' in stats:
-                stats_elements.append(html.Div([
-                    html.Strong("Mean Confidence: "),
-                    html.Span(f"{stats['mean_confidence']*100:.1f}%")
-                ], style={'marginRight': '30px', 'display': 'inline-block'}))
-            
-            if 'anomaly_count' in stats:
-                stats_elements.append(html.Div([
-                    html.Strong("Anomalies: "),
-                    html.Span(f"{stats['anomaly_count']} ({stats['anomaly_percentage']:.1f}%)")
-                ], style={'marginRight': '30px', 'display': 'inline-block'}))
 
-            if 'lookback_days' in stats:
-                stats_elements.append(html.Div([
-                    html.Strong("Lookback: "),
-                    html.Span(f"{stats['lookback_days']} days")
-                ], style={'marginRight': '30px', 'display': 'inline-block'}))
-            
+            if not config.winner_mode:
+                if 'mean_confidence' in stats:
+                    stats_elements.append(html.Div([
+                        html.Strong("Mean Confidence: "),
+                        html.Span(f"{stats['mean_confidence']*100:.1f}%")
+                    ], style={'marginRight': '30px', 'display': 'inline-block'}))
+
+                if 'anomaly_count' in stats:
+                    stats_elements.append(html.Div([
+                        html.Strong("Anomalies: "),
+                        html.Span(f"{stats['anomaly_count']} ({stats['anomaly_percentage']:.1f}%)")
+                    ], style={'marginRight': '30px', 'display': 'inline-block'}))
+
+                if 'lookback_days' in stats:
+                    stats_elements.append(html.Div([
+                        html.Strong("Lookback: "),
+                        html.Span(f"{stats['lookback_days']} days")
+                    ], style={'marginRight': '30px', 'display': 'inline-block'}))
+
             if 'mean_error' in stats:
                 stats_elements.append(html.Div([
                     html.Strong("Mean Error: "),

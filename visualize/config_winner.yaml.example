@@ -1,0 +1,9 @@
+# Visualize Winner Configuration
+# Copy to config_winner.yaml and use with: task visualize-winner
+# Shows only Predicted, Actual, Error (no Confidence, Anomaly).
+
+prediction_data_file: "data/predictions_winner/predictions.parquet"
+winner_mode: true
+
+port: 8051
+host: "127.0.0.1"

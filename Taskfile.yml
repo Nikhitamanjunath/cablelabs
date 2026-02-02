@@ -69,11 +69,27 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} analyze/analyze.py'
 
+  analyze-winner:
+    desc: Build winner (Tuned blend) prediction data from time_series notebook for visualize-winner
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} analyze/analyze_winner.py'
+
   visualize:
     desc: Launch interactive web-based visualization viewer for prediction data
     deps: [deps]
     cmds:
       - '{{.PYTHON_VENV}} visualize/visualize.py'
+
+  visualize-winner:
+    desc: Launch viewer for winner (Tuned blend) predictions (Predicted, Actual, Error only)
+    deps: [deps]
+    cmds:
+      - |
+        if [ ! -f visualize/config_winner.yaml ]; then
+          cp visualize/config_winner.yaml.example visualize/config_winner.yaml
+        fi
+        '{{.PYTHON_VENV}}' visualize/visualize.py --config visualize/config_winner.yaml
 
   clean:
     desc: Remove generated files (keeps scale image, preprocessed images, and images directory)
