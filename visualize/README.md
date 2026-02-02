@@ -108,6 +108,18 @@ The prediction data file contains one row per (date, hour, frequency_band) with 
 - PyYAML - Configuration file parsing
 - Pydantic - Configuration validation
 
+## Port allocation
+
+Web apps in this project use distinct ports to avoid conflicts:
+
+| App | Port | Config / usage |
+|-----|------|----------------|
+| Main viewer (`task visualize`) | 8050 | `visualize/config.yaml` |
+| Winner viewer (`task visualize-winner`) | 8051 | `visualize/config_winner.yaml` |
+| Time series notebook Dash apps | 8052–8063 | Hardcoded in `time_series/time_series.ipynb` |
+
+When adding a new web app, use a port not in this range (e.g. 8070 or higher).
+
 ## Integration
 
 The visualize module uses:
