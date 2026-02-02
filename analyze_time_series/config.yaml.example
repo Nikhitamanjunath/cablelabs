@@ -1,0 +1,37 @@
+# Analyze Time Series Configuration
+
+# Path to transformed data file (same as analyze: from transform step)
+transformed_data_file: "data/transformed/transformed_data.parquet"
+
+# Output folder for time-series analysis results
+output_folder: "data/analyze_time_series"
+
+# Forecasts and metrics files (consumed by visualize_time_series)
+forecasts_file: "forecasts.parquet"
+metrics_file: "metrics.json"
+decomposition_file: "decomposition.parquet"
+
+# Train/test split: last test_days used for test; rest for training
+test_days: 30
+train_min_days: 30
+
+# Rolling window: when forecasting each test date, use up to train_days of history
+train_days: 90
+
+# Models to run (baselines first, then statistical)
+models:
+  - naive
+  - historic_avg
+  - window_avg
+  - seasonal_naive
+  - exponential_smoothing
+  - arima
+  - sarima
+  - ets
+  - prophet
+
+# Optional: limit computation (subset of series)
+# Leave null or empty to use all 24 x 70 series
+# hours: [0, 6, 12, 18]   # only these hours
+# frequency_bands: []     # empty = all bands
+max_series: null

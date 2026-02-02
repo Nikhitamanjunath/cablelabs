@@ -35,7 +35,7 @@ tasks:
 
   setup:
     desc: Set up virtual environment and install all dependencies
-    deps: [venv, deps]
+    deps: [deps]
     cmds:
       - echo "Setup complete! Virtual environment ready at {{.VENV_DIR}}"
 
@@ -75,6 +75,18 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} visualize/visualize.py'
 
+  analyze-time-series:
+    desc: Run time series analysis (baselines, ARIMA/SARIMA, ETS, Prophet) on transform output
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} analyze_time_series/analyze_time_series.py'
+
+  visualize-time-series:
+    desc: Launch interactive time series viewer (frequency/hour selector, PIs, trend/seasonality, model comparison)
+    deps: [deps]
+    cmds:
+      - '{{.PYTHON_VENV}} visualize_time_series/visualize_time_series.py'
+
   clean:
     desc: Remove generated files (keeps scale image, preprocessed images, and images directory)
     cmds:
@@ -91,6 +103,10 @@ tasks:
         if [ -d "data/color_scale_test" ]; then
           rm -rf data/color_scale_test
           echo "Removed data/color_scale_test"
+        fi
+        if [ -d "data/analyze_time_series" ]; then
+          rm -rf data/analyze_time_series
+          echo "Removed data/analyze_time_series"
         fi
         echo "Clean complete! Kept: data/scale, data/preprocessed, data/images"
 
