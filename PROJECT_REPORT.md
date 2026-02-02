@@ -1,6 +1,6 @@
 # From Spectrum Heatmaps to Numeric Time Series: A Pipeline for SpecMon Data Collection, Analysis, and Forecasting
 
-**Abstract** — I describe a pipeline that collects spectrum heatmaps from CableLabs SpecMon, converts them to numeric time series, and supports next-day prediction and hourly forecasting. Stages: automated scraping, color-to-value mapping with per-image scale extraction and OCR, transformation to an hourly grid per frequency band, multi-method prediction with confidence and error, and an interactive web viewer with date selection. A time-series notebook adds decomposition and 1-step-ahead forecasting; a validation-tuned blend of last-hour and same-hour-yesterday slightly beats the naive baseline (MAE 2.40 vs 2.42).
+**Abstract** — This report describes a pipeline that collects spectrum heatmaps from CableLabs SpecMon, converts them to numeric time series, and supports next-day prediction and hourly forecasting. The pipeline has five stages: automated scraping, color-to-value mapping with per-image scale extraction and OCR, transformation to an hourly grid per frequency band, multi-method prediction with confidence and error, and an interactive web viewer with date selection. A time-series notebook adds decomposition and 1-step-ahead forecasting; a validation-tuned blend of last-hour and same-hour-yesterday slightly beats the naive baseline (MAE 2.40 vs 2.42).
 
 ---
 
@@ -22,15 +22,11 @@ Data collection starts at the SpecMon web interface. A browser automation layer 
 
 ### 2.2 Color Scale and Validation
 
-The pipeline maps pixel colors to numeric values using a vertical reference scale: dark blue corresponds to zero and yellow to the maximum. The reference scale is stored as a single image and read vertically (top = max, bottom = zero). To improve perceptual consistency, color-to-value conversion is performed in LAB color space: for each pixel, the closest color on the scale (by Euclidean distance in LAB) is found and its position is mapped linearly to a value in [0, max]. When processing heatmap images, I do not rely solely on the reference scale: for each image, the transformation stage detects the scale region on the right, samples colors along it, and reads the maximum value from the scale label via OCR. The color mapping for that image then uses this per-image scale and max value, so that variations in rendering or labeling across days are accounted for.
+The pipeline maps pixel colors to numeric values using a vertical reference scale: dark blue corresponds to zero and yellow to the maximum. The reference scale is stored as a single image and read vertically (top = max, bottom = zero). To improve perceptual consistency, color-to-value conversion is performed in LAB color space: for each pixel, the closest color on the scale (by Euclidean distance in LAB) is found and its position is mapped linearly to a value in [0, max]. When processing heatmap images, the pipeline does not rely solely on the reference scale: for each image, the transformation stage detects the scale region on the right, samples colors along it, and reads the maximum value from the scale label via OCR. The color mapping for that image then uses this per-image scale and max value, so that variations in rendering or labeling across days are accounted for.
 
-Validation: the reference scale can be visualized with value increments, and a *test color scale* step runs on a sample of preprocessed images to validate per-image scale extraction. That step uses the same scale-detection and OCR logic as the transform: find the vertical scale on the right, sample colors along it, read the max value from the label, then build a value-to-color grid (swatches from 0 to max) and save one image per input heatmap. This checks that scale detection and OCR work on real images before running the full transform. Figure 2 shows the reference scale; Figure 3 shows example test output.
+Validation: the reference scale can be visualized with value increments, and a *test color scale* step runs on a sample of preprocessed images to validate per-image scale extraction. That step uses the same scale-detection and OCR logic as the transform: find the vertical scale on the right, sample colors along it, read the max value from the label, then build a value-to-color grid (swatches from 0 to max) and save one image per input heatmap. This checks that scale detection and OCR work on real images before running the full transform. Figure 2 shows example test output.
 
-**Figure 2.** Reference color scale (dark blue = 0, yellow = max).
-
-![Reference color scale](report_images/reference_color_scale.png)
-
-**Figure 3.** Test color scale output: value-to-color grid from the extracted scale for one preprocessed heatmap (0 to OCR max).
+**Figure 2.** Test color scale output: value-to-color grid from the extracted scale for one preprocessed heatmap (0 to OCR max).
 
 ![Test color scale extraction](report_images/test_color_scale_extraction.png)
 
@@ -38,11 +34,11 @@ Validation: the reference scale can be visualized with value increments, and a *
 
 Each preprocessed image is converted into a numeric table. The transformation stage (1) detects the color scale in the right-hand portion of the image using gradient strength along the vertical direction and fixes a narrow vertical band for the scale; (2) reads the maximum value from the scale label using OCR with multiple regions and preprocessing strategies (contrast, thresholding), falling back to a default if OCR fails; (3) samples colors along the scale bar (top to bottom) and filters out border/background colors; (4) defines a fixed graph region aligned with the heatmap layout (e.g. 24 rows × 70 columns corresponding to hours 0–23 and frequency bands from 3.1 to 3.45 GHz in 0.005 GHz steps); (5) for each cell, takes the center pixel, maps its color to a value using the per-image scale and max value via the LAB-based color scale; (6) outputs one row per (date, hour) and one column per frequency band into a single combined table (e.g. Parquet). Optional debug outputs can save images showing the detected scale region and the grid of sampled cell centers. Figures 4 and 5 show examples of scale-region and dataframe-sampling debug visualizations.
 
-**Figure 4.** Detected scale region on a preprocessed heatmap (debug output).
+**Figure 3.** Detected scale region on a preprocessed heatmap (debug output).
 
 ![Transform scale debug](report_images/detected_scale_region.png)
 
-**Figure 5.** Grid of sampling points over the graph (debug output).
+**Figure 4.** Grid of sampling points over the graph (debug output).
 
 ![Transform dataframe debug](report_images/grid_of_sampling_points.png)
 
@@ -50,7 +46,7 @@ Each preprocessed image is converted into a numeric table. The transformation st
 
 ## 3. Analysis and Prediction
 
-The transformed table (one row per date-hour, columns for each frequency band) is reshaped into a long form with (date, hour, frequency_band, value). The analysis stage produces next-day predictions for every (hour, frequency_band) cell, along with confidence scores and errors when actuals are available. When creating this model I believed that online learning could be used effectively with simple models such as exponential smoothing, linear regression, or moving average; the implementation reflects that choice.
+The transformed table (one row per date-hour, columns for each frequency band) is reshaped into a long form with (date, hour, frequency_band, value). The analysis stage produces next-day predictions for every (hour, frequency_band) cell, along with confidence scores and errors when actuals are available. When creating this model, I believed that online learning could be used effectively with simple models such as exponential smoothing, linear regression, or moving average; the implementation reflects that choice.
 
 ### 3.1 Prediction Methods
 
@@ -77,19 +73,19 @@ After the analysis step completes, an interactive visualization is launched and 
 
 The analysis stage can also write static heatmap images for selected dates. Figure 6 shows an example prediction heatmap for one day.
 
-**Figure 6.** Prediction heatmap for one day (analysis output).
+**Figure 5.** Prediction heatmap for one day (analysis output).
 
 ![Analyze prediction heatmap](report_images/prediction_heatmap.png)
 
-**Figure 7.** Prediction viewer: date selector and view options (runs in browser after analysis).
+**Figure 6.** Prediction viewer: date selector and view options (runs in browser after analysis).
 
 ![Prediction viewer date selector](report_images/prediction_viewer_date_selector.png)
 
-**Figure 8.** Predicted values for a selected day (grid: hours × frequency bands).
+**Figure 7.** Predicted values for a selected day (grid: hours × frequency bands).
 
 ![Predicted example](report_images/predicted_example.png)
 
-**Figure 9.** Actual values for the same day (grid: hours × frequency bands).
+**Figure 8.** Actual values for the same day (grid: hours × frequency bands).
 
 ![Actual example](report_images/actual_example.png)
 
@@ -99,9 +95,9 @@ The analysis stage can also write static heatmap images for selected dates. Figu
 
 ### 4.1 Motivation
 
-The transformed and prediction data are naturally indexed by (date, hour, frequency_band). For each frequency band, the sequence of hourly values forms a time series. Only after learning about time series did I recognize that the analysis-stage model (seasonal exponential smoothing / linear over the past six days, with error per day) was a particular time-series formulation. Once I realized the data was time series I created a Jupyter notebook in the time_series folder. That notebook loads the same transformed table, defines a fixed test window (e.g. the last year of hours), and evaluates 1-step-ahead forecasting models in a unified way (MAE, RMSE, MASE). The goal is to understand structure (trend, seasonality) and to see whether any model can systematically outperform a naive (last observation) baseline. The notebook provides a dropdown to select a frequency band and view the raw hourly series for that band. Figure 10 shows the raw time series with the frequency-range selector.
+The transformed and prediction data are naturally indexed by (date, hour, frequency_band). For each frequency band, the sequence of hourly values forms a time series. Only after learning about time series did I recognize that the analysis-stage model (seasonal exponential smoothing / linear over the past six days, with error per day) was a particular time-series formulation. Once I realized the data was time series, I created a Jupyter notebook in the time_series folder. That notebook loads the same transformed table, defines a fixed test window (e.g. the last year of hours), and evaluates 1-step-ahead forecasting models in a unified way (MAE, RMSE, MASE). The goal is to understand structure (trend, seasonality) and to see whether any model can systematically outperform a naive (last observation) baseline. The notebook provides a dropdown to select a frequency band and view the raw hourly series for that band. Figure 10 shows the raw time series with the frequency-range selector.
 
-**Figure 10.** Raw time series for a selected frequency band (notebook UI with dropdown).
+**Figure 9.** Raw time series for a selected frequency band (notebook UI with dropdown).
 
 ![Raw data with frequency selector](report_images/raw_data_frequency_selector.png)
 
@@ -113,13 +109,13 @@ I apply additive decomposition to each frequency band’s series: **raw = trend 
 - **Seasonality** is the repeating pattern at a fixed period (e.g. 24 hours for daily, 168 hours for weekly). It captures regular cycles—for example, higher values at certain hours each day or certain days each week—and is computed by extracting the periodic component after removing the trend.
 - **Residual** is what remains after subtracting trend and seasonal from the raw series. It represents irregular, unpredictable variation: noise, one-off spikes, or structure that is not captured by trend or the chosen seasonal period. A well-fitting decomposition leaves residuals that look roughly random.
 
-The seasonal component is computed with a fixed period; I support daily (24-hour) and weekly (168-hour) periods. Trend is obtained by a centered moving average over the period length, with extrapolation at the ends so that the residual is defined everywhere. The decomposition is visualized in four panels (raw, trend, seasonal, residual) so that daily vs weekly seasonality can be compared. This confirms a strong daily pattern and suggests that a weekly component may also be present in some bands. Figures 11 and 12 show the full decomposition view and a zoomed-in segment.
+The seasonal component is computed with a fixed period; the notebook supports daily (24-hour) and weekly (168-hour) periods. Trend is obtained by a centered moving average over the period length, with extrapolation at the ends so that the residual is defined everywhere. The decomposition is visualized in four panels (raw, trend, seasonal, residual) so that daily vs weekly seasonality can be compared. This confirms a strong daily pattern and suggests that a weekly component may also be present in some bands. Figures 11 and 12 show the full decomposition view and a zoomed-in segment.
 
-**Figure 11.** Decomposition into raw, trend, seasonal, and residual (four panels).
+**Figure 10.** Decomposition into raw, trend, seasonal, and residual (four panels).
 
 ![Decomposition and seasonality](report_images/decomposition_and_seasonality.png)
 
-**Figure 12.** Decomposition zoomed in to show detail.
+**Figure 11.** Decomposition zoomed in to show detail.
 
 ![Decomp and seasonality zoomed in](report_images/decomp_seasonality_zoomed.png)
 
@@ -156,7 +152,7 @@ All models are evaluated on the same test set (last 365×24 hours) with 1-step-a
 
 ### 4.4 Results (MAE, RMSE, MASE)
 
-All metrics are on the same test set (last 365×24 hours, 1-step-ahead). **MAE** (mean absolute error) is the average of |actual − predicted|; **RMSE** (root mean squared error) is the square root of the average of (actual − predicted)²; **MASE** (mean absolute scaled error) is MAE of the model divided by the MAE of the naive 1-step forecast on the test set, so the naive baseline has MASE = 1 by construction—values below 1 indicate better than naive, above 1 worse.
+All metrics are on the same test set (last 365×24 hours, 1-step-ahead). **MAE** (mean absolute error) is the average of |actual − predicted|; **RMSE** (root mean squared error) is the square root of the average of (actual − predicted)²; **MASE** (mean absolute scaled error) is MAE of the model divided by the MAE of the naive 1-step forecast on the test set, so the naive baseline has MASE = 1 by construction—values below 1 indicate better than naive, above 1 indicate worse.
 
 | Model | MAE | RMSE | MASE |
 |-------|-----|------|------|
@@ -175,27 +171,27 @@ All metrics are on the same test set (last 365×24 hours, 1-step-ahead). **MAE**
 
 The best performer is the **tuned blend** (MAE 2.4041, MASE 0.9935), slightly better than naive (MAE 2.4199, MASE 1.0000). Exponential smoothing is very close to naive. The hybrid (70% last hour, 30% same hour yesterday) and OLS blend are next; moving average and pure seasonal methods (seasonal naive, seasonal weighted average, seasonal exponential smoothing) do worse. ARIMA and Chronos-2, in these configurations, do not beat the simple tuned blend on this 1-step metric.
 
-**Figure 13.** Example error (e.g. MAE or MASE) per model, illustrating relative performance across forecasting methods.
+**Figure 12.** Example error (e.g. MAE or MASE) per model, illustrating relative performance across forecasting methods.
 
 ![Example error graph per model](report_images/example_error_graph_per_model.png)
 
-**Figure 14.** Example time series plot: actual vs predicted for each model (or a selected subset), showing how predictions track the actual series over time.
+**Figure 13.** Example time series plot: actual vs predicted for each model (or a selected subset), showing how predictions track the actual series over time.
 
 ![Example graph plotted for each prediction model](report_images/example_graph_plotted_per_prediction_model.png)
 
 ### 4.5 Diebold–Mariano Test
 
-I use the **Diebold–Mariano (DM) test** to test whether one model has significantly different MAE than another. For two error sequences I form *d*_t = |*e*₁_t| − |*e*₂_t| and compute DM = *d̄*/(σ_d/√*n*); under equal accuracy this is approximately standard normal. I report a two-sided *p*-value; *p* < 0.05 means I reject equal accuracy. DM > 0 ⇒ first model worse (second has lower MAE); DM < 0 ⇒ first model better. In the notebook I merge predictions on (datetime, frequency_band), run pairwise DM for selected model pairs, and report *n*, DM, *p*, and which model has lower MAE.
+I use the **Diebold–Mariano (DM) test** to assess whether one model has significantly different MAE than another. For two error sequences I form *d*_t = |*e*₁_t| − |*e*₂_t| and compute DM = *d̄*/(σ_d/√*n*); under equal accuracy this is approximately standard normal. I report a two-sided *p*-value; *p* < 0.05 means I reject equal accuracy. DM > 0 ⇒ first model worse (second has lower MAE); DM < 0 ⇒ first model better. In the notebook I merge predictions on (datetime, frequency_band), run pairwise DM for selected model pairs, and report *n*, DM, *p*, and which model has lower MAE.
 
 ### 4.6 Winner (Tuned Blend) Visualization
 
 The winning model (tuned blend) can be visualized via the *analyze-winner* and *visualize-winner* tasks, which produce predicted and actual heatmaps for any selected day. Figures 15 and 16 show example winner predicted and actual grids for the same day. **Caveat:** the tuned blend is effectively very close to the naive method: α ∈ [0.97, 1] means the forecast is dominated by the previous hour (last observation), with only a small weight on the same hour yesterday, so behavior and heatmap appearance are similar to naive. Note that the predicted heatmap often appears **shifted downward** relative to the actual: because the previous hour’s weight is high, each row of the prediction is strongly influenced by the row above (last hour), so patterns in the actual data tend to appear shifted down by one hour in the prediction.
 
-**Figure 15.** Example winner predicted (Tuned blend) for one day (grid: hours × frequency bands).
+**Figure 14.** Example winner predicted (Tuned blend) for one day (grid: hours × frequency bands).
 
 ![Example winner predicted](report_images/example_winner_predicted.png)
 
-**Figure 16.** Example winner actual for the same day (grid: hours × frequency bands).
+**Figure 15.** Example winner actual for the same day (grid: hours × frequency bands).
 
 ![Example winner actual](report_images/example_winner_actual.png)
 
