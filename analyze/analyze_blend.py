@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Analyze Winner
+Analyze Blend
 
-Reads the winning model (Tuned blend) predictions from the time_series notebook
-(data/time_series/tuned_blend_predictions.parquet) and converts them into the same
-schema as the analyze module output, so the visualize module can display predicted,
-actual, and error maps the same way. No confidence or anomaly columns needed.
+Reads the tuned blend predictions from the time_series notebook (path from analyze config)
+and converts them into the same schema as the analyze module output, so the visualize
+module can display predicted, actual, and error maps the same way.
+Uses the single analyze config (config.yaml).
 """
 
 import sys
@@ -20,16 +20,19 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+from analyze.analyze import load_config
 
-def run(
-    tuned_blend_file: Optional[Path] = None,
-    output_file: Optional[Path] = None,
-) -> None:
-    """Load tuned blend parquet, add date/hour/error, save for visualize."""
-    if tuned_blend_file is None:
-        tuned_blend_file = project_root / "data" / "time_series" / "tuned_blend_predictions.parquet"
-    if output_file is None:
-        output_file = project_root / "data" / "predictions_winner" / "predictions.parquet"
+
+def run(config=None) -> None:
+    """Load tuned blend parquet from config paths, add date/hour/error, save for visualize."""
+    if config is None:
+        config = load_config()
+    tuned_blend_file = Path(config.blend_input_file)
+    if not tuned_blend_file.is_absolute():
+        tuned_blend_file = project_root / tuned_blend_file
+    output_file = Path(config.blend_output_file)
+    if not output_file.is_absolute():
+        output_file = project_root / output_file
 
     if not tuned_blend_file.exists():
         print(f"✗ Error: Tuned blend predictions not found: {tuned_blend_file}")
@@ -53,20 +56,20 @@ def run(
         "actual": df["actual"].astype(float),
     })
     out["error"] = out["actual"] - out["predicted"]
-    # Visualize expects these columns for full schema; we omit confidence/anomaly in winner viewer
     out["confidence"] = np.nan
     out["is_anomaly"] = False
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(output_file, index=False)
-    print(f"✓ Winner prediction data saved: {output_file}")
+    print(f"✓ Blend prediction data saved: {output_file}")
     print(f"  Rows: {len(out)}, dates: {out['date'].min()} to {out['date'].max()}")
 
 
 def main() -> None:
     """Entry point."""
     try:
-        run()
+        config = load_config()
+        run(config)
     except Exception as e:
         print(f"✗ Error: {e}", file=sys.stderr)
         import traceback

@@ -9,7 +9,7 @@ Allows toggling between predicted values, confidence scores, actual values, and 
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 import pandas as pd
 import numpy as np
 import yaml
@@ -30,12 +30,20 @@ NUM_ROWS = 24  # Hours 0-23
 NUM_COLS = 70  # Frequency bands
 
 
-class VisualizeConfig(BaseModel):
-    """Visualization configuration."""
+class ProfileEntry(BaseModel):
+    """One profile: prediction data file and viewer mode."""
     prediction_data_file: str = Field(
         ...,
-        description="Path to prediction data file (Parquet, CSV, or JSON) created by predict task"
+        description="Path to prediction data file (Parquet, CSV, or JSON)"
     )
+    winner_mode: bool = Field(
+        default=False,
+        description="If true, show only Predicted, Actual, Error (no Confidence, Anomaly)"
+    )
+
+
+class VisualizeConfig(BaseModel):
+    """Visualization configuration (single config, multiple profiles)."""
     port: int = Field(
         default=8050,
         ge=1024,
@@ -46,36 +54,73 @@ class VisualizeConfig(BaseModel):
         default="127.0.0.1",
         description="Host for the Dash web server"
     )
-    winner_mode: bool = Field(
-        default=False,
-        description="If true, show only Predicted, Actual, Error (no Confidence, Anomaly)"
+    default_profile: str = Field(
+        default="main",
+        description="Default profile name when --profile is not set"
+    )
+    profiles: Dict[str, ProfileEntry] = Field(
+        ...,
+        description="Named profiles: each has prediction_data_file and winner_mode"
     )
 
 
 def load_config(config_path: Optional[str] = None) -> VisualizeConfig:
-    """Load and validate YAML configuration file."""
+    """Load and validate YAML configuration file. Supports single profile (legacy) or profiles dict."""
     if config_path is None:
         config_path = Path(__file__).parent / "config.yaml"
-    
+
     config_file = Path(config_path)
-    
+
     if not config_file.exists():
         example_path = Path(__file__).parent / "config.yaml.example"
         raise FileNotFoundError(
             f"Configuration file '{config_path}' not found.\n"
             f"Please create '{config_path}' from '{example_path}'."
         )
-    
+
     try:
         with open(config_file, 'r') as f:
             config_data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise yaml.YAMLError(f"Error parsing YAML: {e}") from e
-    
+
     if not config_data:
         raise ValueError(f"Configuration file '{config_path}' is empty.")
-    
-    return VisualizeConfig(**config_data)
+
+    # Normalize: either "profiles" (multi-profile) or legacy top-level prediction_data_file
+    if "profiles" in config_data and isinstance(config_data.get("profiles"), dict):
+        profiles = {
+            k: ProfileEntry(**v) if isinstance(v, dict) else v
+            for k, v in config_data["profiles"].items()
+        }
+        default_profile = config_data.get("default_profile", "main")
+        return VisualizeConfig(
+            port=config_data.get("port", 8050),
+            host=config_data.get("host", "127.0.0.1"),
+            default_profile=default_profile,
+            profiles=profiles,
+        )
+    # Legacy: single prediction_data_file at top level; add main + blend + persistence_delta so --profile works
+    profiles = {
+        "main": ProfileEntry(
+            prediction_data_file=config_data["prediction_data_file"],
+            winner_mode=config_data.get("winner_mode", False),
+        ),
+        "blend": ProfileEntry(
+            prediction_data_file="data/predictions_blend/predictions.parquet",
+            winner_mode=True,
+        ),
+        "persistence_delta": ProfileEntry(
+            prediction_data_file="data/predictions_persistence_delta/predictions.parquet",
+            winner_mode=True,
+        ),
+    }
+    return VisualizeConfig(
+        port=config_data.get("port", 8050),
+        host=config_data.get("host", "127.0.0.1"),
+        default_profile="main",
+        profiles=profiles,
+    )
 
 
 def load_prediction_data(data_file: Path) -> pd.DataFrame:
@@ -307,18 +352,25 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Interactive prediction data viewer")
     parser.add_argument("--config", default=None, help="Path to config YAML (default: visualize/config.yaml)")
+    parser.add_argument("--profile", default=None, help="Profile name (default: from config default_profile)")
     args = parser.parse_args()
 
     try:
         print("Loading configuration...")
         config = load_config(config_path=args.config)
+        profile_name = args.profile or config.default_profile
+        entry = config.profiles.get(profile_name)
+        if not entry:
+            print(f"✗ Error: Unknown profile '{profile_name}'. Available: {list(config.profiles.keys())}")
+            return
         print("✓ Configuration loaded")
-        if config.winner_mode:
-            print("  Mode: Winner (Predicted, Actual, Error only)")
+        print(f"  Profile: {profile_name}")
+        if entry.winner_mode:
+            print("  Mode: Predicted, Actual, Error only")
 
         # Load prediction data
-        print(f"\nLoading prediction data from: {config.prediction_data_file}")
-        data_file = Path(config.prediction_data_file)
+        print(f"\nLoading prediction data from: {entry.prediction_data_file}")
+        data_file = Path(entry.prediction_data_file)
         df = load_prediction_data(data_file)
         print(f"✓ Loaded {len(df)} data points")
 
@@ -336,7 +388,7 @@ def main():
             {'label': 'Actual', 'value': 'actual'},
             {'label': 'Error', 'value': 'error'},
         ]
-        if not config.winner_mode:
+        if not entry.winner_mode:
             view_options = [
                 {'label': 'Predicted', 'value': 'predicted'},
                 {'label': 'Confidence', 'value': 'confidence'},
@@ -347,7 +399,7 @@ def main():
 
         # Initialize Dash app
         app = dash.Dash(__name__)
-        title = "Winner (Tuned Blend) Prediction Viewer" if config.winner_mode else "Prediction Data Interactive Viewer"
+        title = f"Prediction Viewer ({profile_name})"
 
         # App layout
         app.layout = html.Div([
@@ -492,7 +544,7 @@ def main():
             stats = calculate_stats(df, selected_date)
             stats_elements = []
 
-            if not config.winner_mode:
+            if not entry.winner_mode:
                 if 'mean_confidence' in stats:
                     stats_elements.append(html.Div([
                         html.Strong("Mean Confidence: "),

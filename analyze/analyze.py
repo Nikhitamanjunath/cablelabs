@@ -84,6 +84,20 @@ class AnalyzeConfig(BaseModel):
         description="Lookback values to learn; empty to disable lookback learning",
     )
 
+    # Blend and persistence-delta (used by analyze_blend.py and analyze_persistence_delta.py)
+    blend_input_file: str = Field(
+        default="data/time_series/tuned_blend_predictions.parquet",
+        description="Tuned blend parquet from time_series notebook (input for analyze_blend)",
+    )
+    blend_output_file: str = Field(
+        default="data/predictions_blend/predictions.parquet",
+        description="Output parquet for blend predictions (for visualize)",
+    )
+    persistence_delta_output_file: str = Field(
+        default="data/predictions_persistence_delta/predictions.parquet",
+        description="Output parquet for persistence+hour-delta predictions (for visualize)",
+    )
+
 
 def load_config(config_path: Optional[str] = None) -> AnalyzeConfig:
     """Load and validate YAML configuration file."""

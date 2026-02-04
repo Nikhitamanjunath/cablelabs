@@ -114,9 +114,12 @@ Web apps in this project use distinct ports to avoid conflicts:
 
 | App | Port | Config / usage |
 |-----|------|----------------|
-| Main viewer (`task visualize`) | 8050 | `visualize/config.yaml` |
-| Winner viewer (`task visualize-winner`) | 8051 | `visualize/config_winner.yaml` |
+| Main viewer (`task visualize`) | 8050 | `visualize/config.yaml` (profile: main) |
+| Blend viewer (`task visualize-blend`) | 8050 | Same config, `--profile blend` |
+| Persistence+delta viewer (`task visualize-persistence-delta`) | 8050 | Same config, `--profile persistence_delta` |
 | Time series notebook Dash apps | 8052–8063 | Hardcoded in `time_series/time_series.ipynb` |
+
+All viewers use the **single** `visualize/config.yaml`; profiles (main, blend, persistence_delta) select which prediction data file and viewer mode to use.
 
 When adding a new web app, use a port not in this range (e.g. 8070 or higher).
 

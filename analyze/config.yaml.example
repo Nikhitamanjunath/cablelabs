@@ -13,6 +13,13 @@ output_folder: "data/predictions"
 # This file is consumed by the visualize module
 prediction_data_file: "data/predictions/predictions_data.parquet"
 
+# Blend: tuned blend from time_series notebook (used by analyze_blend.py)
+blend_input_file: "data/time_series/tuned_blend_predictions.parquet"
+blend_output_file: "data/predictions_blend/predictions.parquet"
+
+# Persistence + hour delta (used by analyze_persistence_delta.py; input uses transformed_data_file above)
+persistence_delta_output_file: "data/predictions_persistence_delta/predictions.parquet"
+
 # Hyperparameters for prediction
 lookback_days: 6
 prediction_method: "exponential_smoothing"

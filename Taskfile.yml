@@ -69,27 +69,55 @@ tasks:
     cmds:
       - '{{.PYTHON_VENV}} analyze/analyze.py'
 
-  analyze-winner:
-    desc: Build winner (Tuned blend) prediction data from time_series notebook for visualize-winner
-    deps: [deps]
-    cmds:
-      - '{{.PYTHON_VENV}} analyze/analyze_winner.py'
-
-  visualize:
-    desc: Launch interactive web-based visualization viewer for prediction data
-    deps: [deps]
-    cmds:
-      - '{{.PYTHON_VENV}} visualize/visualize.py'
-
-  visualize-winner:
-    desc: Launch viewer for winner (Tuned blend) predictions (Predicted, Actual, Error only)
+  analyze-blend:
+    desc: Build blend (Tuned blend) prediction data from time_series notebook for visualize-blend
     deps: [deps]
     cmds:
       - |
-        if [ ! -f visualize/config_winner.yaml ]; then
-          cp visualize/config_winner.yaml.example visualize/config_winner.yaml
+        if [ ! -f analyze/config.yaml ]; then
+          cp analyze/config.yaml.example analyze/config.yaml
         fi
-        '{{.PYTHON_VENV}}' visualize/visualize.py --config visualize/config_winner.yaml
+        '{{.PYTHON_VENV}}' analyze/analyze_blend.py
+
+  visualize:
+    desc: "Launch interactive web-based visualization viewer for prediction data (profile: main)"
+    deps: [deps]
+    cmds:
+      - |
+        if [ ! -f visualize/config.yaml ]; then
+          cp visualize/config.yaml.example visualize/config.yaml
+        fi
+        '{{.PYTHON_VENV}}' visualize/visualize.py --config visualize/config.yaml
+
+  visualize-blend:
+    desc: "Launch viewer for blend predictions (profile: blend)"
+    deps: [deps]
+    cmds:
+      - |
+        if [ ! -f visualize/config.yaml ]; then
+          cp visualize/config.yaml.example visualize/config.yaml
+        fi
+        '{{.PYTHON_VENV}}' visualize/visualize.py --config visualize/config.yaml --profile blend
+
+  analyze-persistence-delta:
+    desc: Build persistence+hour-delta prediction data (same logic as time_series_14 notebook) for visualize-persistence-delta
+    deps: [deps]
+    cmds:
+      - |
+        if [ ! -f analyze/config.yaml ]; then
+          cp analyze/config.yaml.example analyze/config.yaml
+        fi
+        '{{.PYTHON_VENV}}' analyze/analyze_persistence_delta.py
+
+  visualize-persistence-delta:
+    desc: "Launch viewer for persistence+hour-delta predictions (profile: persistence_delta)"
+    deps: [deps]
+    cmds:
+      - |
+        if [ ! -f visualize/config.yaml ]; then
+          cp visualize/config.yaml.example visualize/config.yaml
+        fi
+        '{{.PYTHON_VENV}}' visualize/visualize.py --config visualize/config.yaml --profile persistence_delta
 
   clean:
     desc: Remove generated files (keeps scale image, preprocessed images, and images directory)
